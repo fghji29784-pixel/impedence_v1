@@ -299,6 +299,7 @@ def fit_eis_model(
     neg_im_z: np.ndarray,
     model_name: str,
     p0_override: Optional[list] = None,
+    rs_min_bound: float = 0.0,
 ) -> EISFitResult:
     """
     Fit a single equivalent circuit model to EIS data using CNLS.
@@ -320,8 +321,19 @@ def fit_eis_model(
 
     geo = _estimate_p0_from_geometry(freq, re_z, neg_im_z)
     p0 = p0_override if p0_override is not None else m["make_p0"](geo)
-    lo = m["bounds_lo"]
+    lo = list(m["bounds_lo"])   # mutable copy
     hi = m["bounds_hi"]
+
+    # Tighten Rs lower bound to prevent optimizer from pushing Rs below the
+    # minimum observed Re(Z).  rs_min_bound is the full-data re_z.min()
+    # (including any inductive region excluded from freq_fit).  We allow 5%
+    # slack to accommodate fitting noise, but ensure Rs ≥ 0.95 * real minimum.
+    if rs_min_bound > 0.0:
+        lo[0] = max(lo[0], rs_min_bound * 0.95)
+        # Also improve initial Rs guess if geometry estimate is too low
+        if geo["Rs"] < rs_min_bound * 0.95:
+            geo["Rs"] = rs_min_bound
+            p0 = p0_override if p0_override is not None else m["make_p0"](geo)
 
     # Clamp p0 inside bounds with additive epsilon.
     # Additive (not multiplicative) ensures CPE alpha near 1.0 is reachable.
@@ -423,6 +435,11 @@ def fit_eis_all_models(
     re_z = re_z[idx_sort]
     neg_im_z = neg_im_z[idx_sort]
 
+    # Rs minimum from FULL data (including inductive region).
+    # Used as a lower bound in fitting to prevent the optimizer from pushing
+    # Rs below the physically observed Re(Z) minimum.
+    rs_min_full = float(re_z.min())
+
     # ── Filter out inductive region (neg_im_z < 0) ─────────────────────
     # At high frequencies, cable/contact inductance causes Im(Z) > 0
     # (i.e. neg_im_z < 0). The RC-based equivalent circuit models do not
@@ -442,7 +459,8 @@ def fit_eis_all_models(
     results = []
     for name in MODELS:
         try:
-            r = fit_eis_model(freq_fit, re_z_fit, nim_fit, name)
+            r = fit_eis_model(freq_fit, re_z_fit, nim_fit, name,
+                              rs_min_bound=rs_min_full)
             # Store the FULL (unfiltered) measured data for display
             r.freq          = freq
             r.re_z_meas     = re_z

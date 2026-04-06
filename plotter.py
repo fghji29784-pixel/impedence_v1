@@ -332,9 +332,25 @@ def plot_eis_fit(eis_result) -> Figure:
     ax.scatter(re_meas, im_meas,
                color="#F44336", s=22, zorder=4, label="EIS 실측", alpha=0.85)
 
-    # Fitted curve (sorted by frequency for smooth line)
-    idx_sort = np.argsort(eis_result.freq)[::-1]
-    ax.plot(re_fit[idx_sort], im_fit[idx_sort],
+    # Fitted curve: recompute on dense log-spaced grid to avoid index-length
+    # mismatch (Z_fit was computed on filtered freq_fit, not full eis_result.freq)
+    from eis_fitter import MODELS as _EIS_MODELS
+    import math as _math
+    try:
+        _f_lo = max(float(eis_result.freq.min()), 1e-4)
+        _f_hi = float(eis_result.freq.max())
+        _f_dense = np.logspace(_math.log10(_f_lo), _math.log10(_f_hi), 400)
+        _omega_dense = 2.0 * np.pi * _f_dense
+        _Z_dense = _EIS_MODELS[eis_result.model_name]["z_func"](
+            eis_result.param_values, _omega_dense
+        )
+        re_fit_line = np.real(_Z_dense) * 1000
+        im_fit_line = -np.imag(_Z_dense) * 1000
+    except Exception:
+        # fallback: use Z_fit directly (may be shorter than freq)
+        re_fit_line = re_fit
+        im_fit_line = im_fit
+    ax.plot(re_fit_line, im_fit_line,
             color="#2196F3", linewidth=2.0, zorder=3, label=f"피팅: {eis_result.model_name}")
 
     # Rs annotation
