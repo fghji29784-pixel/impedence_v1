@@ -317,3 +317,107 @@ def detect_I_set(df: pd.DataFrame) -> float:
     transient spikes inflating the estimate.
     """
     return float(np.percentile(df["current_A"].abs(), 95))
+
+
+# ──────────────────────────────────────────────
+# Relaxation phase extraction
+# ──────────────────────────────────────────────
+
+def find_relaxation_start(
+    df: pd.DataFrame,
+    I_set: float,
+    search_after_idx: int | None = None,
+    threshold_fraction: float = 0.05,
+) -> int | None:
+    """Find the first index where current drops back to near-zero after the pulse.
+
+    This marks the start of the relaxation (rest) phase that follows a
+    charge pulse.  The relaxation voltage recovery contains the RC discharge
+    transient, which provides a second independent constraint for R1, C1,
+    R2, C2 and allows sequential peeling to work on a cleaner signal.
+
+    Parameters
+    ----------
+    df                  : DataFrame with 'current_A'
+    I_set               : settled charge current [A]
+    search_after_idx    : row-label index; only search after this point.
+                          Typically idx_p2 or the end of the CC window.
+    threshold_fraction  : current < threshold_fraction * I_set → relaxation
+
+    Returns
+    -------
+    Row-label index of relaxation start, or None if not found.
+    """
+    threshold = threshold_fraction * abs(I_set)
+    if search_after_idx is not None:
+        pos_start = df.index.get_loc(search_after_idx) + 1
+        search = df.iloc[pos_start:]
+    else:
+        search = df
+
+    mask = search["current_A"].abs() < threshold
+    if not mask.any():
+        return None
+    return int(mask.idxmax())
+
+
+def prepare_relaxation_data(
+    df: pd.DataFrame,
+    idx_relax_start: int,
+    window_s: float = 30.0,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Extract voltage recovery data from the relaxation phase.
+
+    The relaxation phase starts when the charge current is removed.
+    The voltage decays back toward OCV following:
+      V(t) = V_relax0 - R1*I_pre*(1-exp(-t/τ1)) - R2*I_pre*(1-exp(-t/τ2))
+    where I_pre is the pre-relaxation current (= I_set, positive).
+
+    A longer window captures the slow RC (τ2 ~ seconds) and makes R2, C2
+    estimation far more reliable than using the charge transient alone
+    (Hust et al. 2021; HPPC methodology).
+
+    Parameters
+    ----------
+    df              : DataFrame with 'time_s', 'voltage_V'
+    idx_relax_start : row-label index of first relaxation sample
+    window_s        : relaxation window length [s] (default 30 s)
+
+    Returns
+    -------
+    t_relax  : time [s], 0-based from relaxation start
+    V_relax  : voltage [V]
+    V_relax0 : voltage at start of relaxation [V]
+    """
+    time_all = df["time_s"].values
+    volt_all = df["voltage_V"].values
+
+    diffs = np.diff(time_all)
+    pos_diffs = diffs[diffs > 0]
+    dt = float(np.median(pos_diffs)) if len(pos_diffs) > 0 else 1.0
+
+    pos_r0 = df.index.get_loc(idx_relax_start)
+    n_relax = max(2, int(round(window_s / dt)))
+    pos_end = min(pos_r0 + n_relax, len(df))
+
+    t_abs   = time_all[pos_r0 : pos_end]
+    V_raw   = volt_all[pos_r0 : pos_end]
+    t_relax = t_abs - t_abs[0]
+    V_relax0 = float(V_raw[0])
+
+    # Mixed-rate resample (same logic as prepare_fit_data)
+    diffs_r = np.diff(t_relax)
+    pos_dr  = diffs_r[diffs_r > 0]
+    if len(pos_dr) >= 2:
+        dt_min_r = float(pos_dr.min())
+        dt_max_r = float(pos_dr.max())
+        if dt_max_r / dt_min_r > 10.0 and float(t_relax[-1]) > 0.0:
+            n_pts = max(500, min(2000, len(t_relax)))
+            t_new = np.concatenate([
+                [0.0],
+                np.geomspace(dt_min_r, float(t_relax[-1]), n_pts - 1),
+            ])
+            V_raw = np.interp(t_new, t_relax, V_raw)
+            t_relax = t_new
+
+    return t_relax, V_raw.copy(), V_relax0

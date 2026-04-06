@@ -196,6 +196,36 @@ def voltage_response_1rc(
     return Vp2 + R1 * I * (1.0 - np.exp(-t / tau1))
 
 
+def voltage_response_relaxation(
+    t: np.ndarray,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    V_relax0: float,
+    I_pre: float,
+) -> np.ndarray:
+    """Voltage recovery during relaxation (current-off) phase.
+
+    When the charge current I_pre is removed at t=0:
+      V(t) = V_relax0 - R1*I_pre*(1-exp(-t/τ1)) - R2*I_pre*(1-exp(-t/τ2))
+
+    V_relax0 : voltage at the instant current is removed [V].
+               It already contains the Rs·I_pre drop which disappears
+               instantaneously at t=0 (Rs has no time constant).
+    I_pre    : pre-relaxation steady current [A], positive for charging.
+
+    The relaxation signal is purely driven by RC discharge — no Rs, no
+    Warburg (√t) contribution.  This makes R1·C1 and R2·C2 independently
+    identifiable without interference from ohmic and diffusion terms.
+    """
+    tau1 = R1 * C1
+    tau2 = R2 * C2
+    e1 = np.exp(-t / tau1) if tau1 > 0.0 else np.zeros_like(t)
+    e2 = np.exp(-t / tau2) if tau2 > 0.0 else np.zeros_like(t)
+    return V_relax0 - R1 * I_pre * (1.0 - e1) - R2 * I_pre * (1.0 - e2)
+
+
 def _zoh_step(x_prev: float, dt: float, R: float, tau: float, I_prev: float) -> float:
     """One zero-order-hold step for RC charging.
 
@@ -358,6 +388,10 @@ def fit_parameters(
     I_ramp: np.ndarray | None = None,
     V_ramp: np.ndarray | None = None,
     V0: float | None = None,
+    # relaxation extras (only used when model == "relaxation")
+    t_relax: np.ndarray | None = None,
+    V_relax: np.ndarray | None = None,
+    V_relax0: float | None = None,
 ) -> FitResult:
     """Fit equivalent circuit parameters to measured voltage transient.
 
@@ -392,12 +426,101 @@ def fit_parameters(
             raise ValueError("joint_warburg requires t_ramp, I_ramp, V_ramp, V0")
         return _fit_joint_warburg(
             t_ramp, I_ramp, V_ramp,
-            t_fit, V_fit,          # t_cc, V_cc  (t_fit is 0-based from p2)
+            t_fit, V_fit,
             I, V0, Rs,
             use_lmfit, cell_preset,
         )
 
+    if model == "relaxation":
+        if t_relax is None or V_relax is None or V_relax0 is None:
+            raise ValueError("relaxation model requires t_relax, V_relax, V_relax0")
+        return _fit_relaxation(
+            t_fit, V_fit,
+            t_relax, V_relax, V_relax0,
+            Rs, I, Vp2, use_lmfit, cell_preset,
+        )
+
     return _fit_2rc(t_fit, V_fit, Rs, I, Vp2, use_lmfit, cell_preset)
+
+
+def _sequential_peel_p0(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Vp2: float,
+    I: float,
+    lb: list,
+    ub: list,
+) -> list:
+    """Estimate 2RC initial parameters via sequential exponential peeling.
+
+    Algorithm (Hust et al. 2021):
+    1. Tail of V(t) is dominated by the slow RC (τ2 >> τ1).
+       Fit a single decaying exponential to the last 30% of the window
+       to estimate R2, τ2 (hence C2).
+    2. Subtract the slow component and fit the residual early portion
+       to get R1, τ1 (hence C1).
+
+    Returns p0 = [R1, C1, R2, C2] clamped to [lb, ub].
+    """
+    try:
+        V_delta = V_fit - Vp2          # voltage rise from p2
+        n = len(t_fit)
+        if n < 10:
+            return None
+
+        # ── Step 1: slow RC from tail (last 30%) ──────────────────────────
+        tail_start = max(int(n * 0.70), n - 50)
+        t_tail = t_fit[tail_start:] - t_fit[tail_start]
+        V_tail = V_delta[tail_start:]
+        V_sat  = float(V_delta[-1])    # plateau approximation
+
+        # Single exponential fit to tail: V = A*(1 - exp(-t/tau))
+        # Linearise: ln(V_sat - V) = ln(A) - t/tau  (requires V < V_sat)
+        V_rem = V_sat - V_tail
+        # guard against log of non-positive
+        pos = V_rem > 0
+        if pos.sum() >= 3:
+            coeffs = np.polyfit(t_tail[pos], np.log(np.maximum(V_rem[pos], 1e-12)), 1)
+            tau2_est = float(np.clip(-1.0 / coeffs[0], 0.05, float(t_fit[-1]) * 5.0))
+            R2_est   = float(np.clip(V_sat / max(abs(I), 1e-9) * 0.6,
+                                     lb[2], ub[2]))
+            C2_est   = float(np.clip(tau2_est / max(R2_est, 1e-9),
+                                     lb[3], ub[3]))
+        else:
+            R2_est  = float((lb[2] * ub[2]) ** 0.5)
+            C2_est  = float((lb[3] * ub[3]) ** 0.5)
+            tau2_est = R2_est * C2_est
+
+        # ── Step 2: fast RC from early residual (first 30%) ───────────────
+        early_end = max(min(int(n * 0.30), 80), 5)
+        t_early   = t_fit[:early_end]
+        # Remove slow component from early portion
+        slow_contrib = R2_est * abs(I) * (1.0 - np.exp(-t_early / max(tau2_est, 1e-12)))
+        V_early_resid = V_delta[:early_end] - slow_contrib
+
+        V_fast_sat = float(V_early_resid[-1]) if V_early_resid[-1] > 0 else float(np.max(V_early_resid))
+        V_fast_rem = V_fast_sat - V_early_resid
+        pos2 = (V_fast_rem > 0) & (t_early > 0)
+        if pos2.sum() >= 3:
+            coeffs2  = np.polyfit(t_early[pos2], np.log(np.maximum(V_fast_rem[pos2], 1e-12)), 1)
+            tau1_est = float(np.clip(-1.0 / coeffs2[0], 1e-5, float(t_fit[-1]) * 0.5))
+            R1_est   = float(np.clip(V_fast_sat / max(abs(I), 1e-9),
+                                     lb[0], ub[0]))
+            C1_est   = float(np.clip(tau1_est / max(R1_est, 1e-9),
+                                     lb[1], ub[1]))
+        else:
+            R1_est = float((lb[0] * ub[0]) ** 0.5)
+            C1_est = float((lb[1] * ub[1]) ** 0.5)
+
+        p0_est = [
+            float(np.clip(R1_est, lb[0] + 1e-12, ub[0] - 1e-12)),
+            float(np.clip(C1_est, lb[1] + 1e-12, ub[1] - 1e-12)),
+            float(np.clip(R2_est, lb[2] + 1e-12, ub[2] - 1e-12)),
+            float(np.clip(C2_est, lb[3] + 1e-12, ub[3] - 1e-12)),
+        ]
+        return p0_est
+    except Exception:
+        return None
 
 
 def _fit_2rc(
@@ -409,9 +532,12 @@ def _fit_2rc(
     use_lmfit: bool,
     cell_preset: dict,
 ) -> FitResult:
-    p0 = cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
     lb = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3])
     ub = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0])
+
+    # Try sequential-peel initialisation first; fall back to preset p0
+    p0_peel = _sequential_peel_p0(t_fit, V_fit, Vp2, I, lb, ub)
+    p0 = p0_peel if p0_peel is not None else cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
 
     def model_fixed(t, R1, C1, R2, C2):
         return voltage_response_2rc(t, R1, C1, R2, C2, Vp2, I)
@@ -440,7 +566,6 @@ def _fit_2rc(
             return par.stderr if par.stderr is not None else float("nan")
 
         sigma = [_s(p["R1"]), _s(p["C1"]), _s(p["R2"]), _s(p["C2"])]
-        V_pred = model_fixed(t_fit, R1, C1, R2, C2)
         converged = lm_result.success
     else:
         converged = True
@@ -454,7 +579,7 @@ def _fit_2rc(
                 p0=p0,
                 bounds=(lb, ub),
                 method="trf",
-                maxfev=10000,
+                maxfev=20000,
             )
             R1, C1, R2, C2 = popt
             sigma = np.sqrt(np.diag(pcov)).tolist()
@@ -488,9 +613,12 @@ def _fit_2rc_warburg(
     absorbs slow diffusion voltage, preventing R2 from inflating to absorb it.
     Expected result: R1+R2 ≈ EIS Rct, sigma_W captures the Warburg portion.
     """
-    p0_rc = cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
     lb_rc = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3])
     ub_rc = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0])
+
+    # RC initial guess: try sequential peel, fall back to preset
+    p0_peel = _sequential_peel_p0(t_fit, V_fit, Vp2, I, lb_rc, ub_rc)
+    p0_rc = p0_peel if p0_peel is not None else cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
 
     # Warburg initial guess: estimate from measured voltage span.
     # σ_W ≈ ΔV_unexplained / (I * √T).  We approximate the unexplained portion
@@ -679,6 +807,103 @@ def _fit_joint_warburg(
     )
     result.sigma_W = float(sigma_W)
     return result
+
+
+def _fit_relaxation(
+    t_cc: np.ndarray,
+    V_cc: np.ndarray,
+    t_relax: np.ndarray,
+    V_relax: np.ndarray,
+    V_relax0: float,
+    Rs: float,
+    I_set: float,
+    Vp2: float,
+    use_lmfit: bool,
+    cell_preset: dict,
+) -> FitResult:
+    """Combined CC + Relaxation fit (HPPC-style two-phase fitting).
+
+    Why this is better (Hust et al. 2021; Koseoglou 2023):
+    - CC phase (charge pulse) constrains R1+R2 and overall voltage rise.
+    - Relaxation phase constrains R1·C1 and R2·C2 time constants independently.
+      During relaxation, Rs drops out instantly (no ohmic contribution), so
+      the exponential decay is pure RC — τ1 and τ2 are much easier to resolve.
+    - Sequential peeling applied to the relaxation tail gives better p0 for
+      the joint optimisation.
+
+    The joint target vector is [V_cc, V_relax], weighted equally.
+    Rs is still fixed (from ΔV/ΔI or joint_warburg).
+    """
+    lb = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3])
+    ub = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0])
+
+    # Sequential peel on RELAXATION signal (cleaner than CC for τ estimation)
+    p0_peel = _sequential_peel_p0(t_relax, -V_relax + V_relax0 + (V_relax[0] - V_relax0),
+                                  0.0, -I_set, lb, ub)
+    # Fall back: peel on CC signal
+    if p0_peel is None:
+        p0_peel = _sequential_peel_p0(t_cc, V_cc, Vp2, I_set, lb, ub)
+    p0 = p0_peel if p0_peel is not None else cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
+
+    # Build combined target
+    V_target = np.concatenate([V_cc, V_relax])
+    n_cc     = len(V_cc)
+
+    def model_combined(_, R1, C1, R2, C2):
+        V_cc_model = voltage_response_2rc(t_cc, R1, C1, R2, C2, Vp2, I_set)
+        V_rx_model = voltage_response_relaxation(t_relax, R1, C1, R2, C2,
+                                                  V_relax0, I_set)
+        return np.concatenate([V_cc_model, V_rx_model])
+
+    x_dummy = np.arange(len(V_target), dtype=float)
+
+    if use_lmfit:
+        try:
+            import lmfit
+        except ImportError:
+            use_lmfit = False
+
+    converged = True
+    R1, C1, R2, C2 = p0
+    sigma = [float("nan")] * 4
+
+    if use_lmfit:
+        import lmfit
+        params = lmfit.Parameters()
+        for name, p0v, lbv, ubv in zip(["R1", "C1", "R2", "C2"], p0, lb, ub):
+            params.add(name, value=p0v, min=lbv, max=ubv)
+
+        def residual(p):
+            return model_combined(x_dummy, p["R1"], p["C1"], p["R2"], p["C2"]) - V_target
+
+        lm = lmfit.minimize(residual, params, method="least_squares")
+        p  = lm.params
+        R1, C1, R2, C2 = (p["R1"].value, p["C1"].value,
+                           p["R2"].value, p["C2"].value)
+        converged = lm.success
+    else:
+        try:
+            popt, pcov = curve_fit(
+                model_combined, x_dummy, V_target,
+                p0=p0, bounds=(lb, ub),
+                method="trf", maxfev=20000,
+            )
+            R1, C1, R2, C2 = popt
+            sigma = np.sqrt(np.diag(pcov)).tolist()
+        except (RuntimeError, ValueError):
+            converged = False
+
+    # Report quality on CC portion only (primary measurement)
+    V_cc_pred = voltage_response_2rc(t_cc, R1, C1, R2, C2, Vp2, I_set)
+
+    return FitResult(
+        Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[0], sigma_C1=sigma[1],
+        sigma_R2=sigma[2], sigma_C2=sigma[3],
+        r2=_r2(V_cc, V_cc_pred),
+        rmse_mv=_rmse_mv(V_cc, V_cc_pred),
+        converged=converged,
+    )
 
 
 def _fit_1rc(

@@ -425,10 +425,11 @@ def render_tab_nyquist() -> None:
 | 두 번째 반원 지름 | **R₂** (확산 저항) |
 | 오른쪽 끝 | Rs + R₁ + R₂ (DC 총 저항) |
 
-**EIS-보정 DCIM 곡선 (파란 실선):**
-DCIM은 2-wire 측정이라 Rs에 케이블/접촉 저항이 포함됩니다.
-EIS Rs(4-wire)와 맞춰 x축 오프셋 보정한 곡선입니다.
-아크 **모양(R₁, R₂)** 비교에 사용하세요.
+**Rs 차이 해석:**
+DCIM Rs는 DC 2-wire 측정으로 케이블/접촉 저항 포함.
+EIS Rs는 4-wire 고주파 측정으로 순수 전해질 저항.
+두 곡선의 **x축 시작점 차이** = 측정 방식 차이이며,
+아크 **너비(R₁+R₂)** 비교는 여전히 유효합니다.
 """)
 
         if st.session_state.df_eis is not None:

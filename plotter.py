@@ -244,18 +244,8 @@ def plot_nyquist(
     else:
         rs_eis = None
 
-    # ── EIS-aligned DCIM curve ────────────────────────────────────────────
-    # The Rs difference (DCIM 2-wire > EIS 4-wire) shifts the whole DCIM arc
-    # to the right, making visual comparison impossible.  We compute a
-    # shifted copy of the DCIM curve that starts at Rs_EIS so the arc SHAPE
-    # can be compared directly with EIS data.
-    shift = 0.0
-    if rs_eis is not None and rs_dcim is not None:
-        shift = rs_dcim - rs_eis     # mΩ; positive = DCIM starts too far right
-    re_z_shifted = re_z * 1000 - shift   # EIS-aligned DCIM curve
-
-    # ── View bounds: capacitive data + EIS-aligned DCIM ───────────────────
-    view_re = list(re_z_shifted)
+    # ── View bounds: EIS capacitive arc + full DCIM curve ────────────────
+    view_re = list(re_z * 1000)
     view_im = list(neg_im_z * 1000)
     if eis_cap is not None and len(eis_cap) > 0:
         view_re += list(eis_cap["re_z"] * 1000)
@@ -289,23 +279,13 @@ def plot_nyquist(
                 marker="x", alpha=0.35,
             )
 
-    # ── DCIM curves ───────────────────────────────────────────────────────
-    if shift != 0.0 and abs(shift) > 0.01:
-        # Shifted (EIS-aligned) — primary curve for visual comparison
-        ax.plot(re_z_shifted, neg_im_z * 1000,
-                color="#1E88E5", linewidth=2.0, zorder=4,
-                label=f"DCIM (EIS Rs 보정, −{shift:.2f} mΩ)")
-        # Original position — dashed, for reference
-        ax.plot(re_z * 1000, neg_im_z * 1000,
-                color="#90CAF9", linewidth=1.2, zorder=3, linestyle="--",
-                label=f"DCIM (원래 위치, Rs={rs_dcim:.2f} mΩ)")
-    else:
-        ax.plot(re_z * 1000, neg_im_z * 1000,
-                color="#1E88E5", linewidth=2.0, zorder=4, label="DCIM model")
+    # ── DCIM reconstructed curve ──────────────────────────────────────────
+    ax.plot(re_z * 1000, neg_im_z * 1000,
+            color="#1E88E5", linewidth=2.0, zorder=4, label="DCIM 재현")
 
     # ── Rs vertical lines ─────────────────────────────────────────────────
     if rs_dcim is not None:
-        ax.axvline(rs_dcim, color="#1565C0", linestyle=":", linewidth=0.9, alpha=0.6)
+        ax.axvline(rs_dcim, color="#1565C0", linestyle="--", linewidth=0.9, alpha=0.7)
         ax.annotate(
             f"Rs(DCIM)={rs_dcim:.2f} mΩ",
             xy=(rs_dcim, 0),
@@ -317,7 +297,7 @@ def plot_nyquist(
     if rs_eis is not None:
         label_rs = ("피팅된 EIS Rs" if eis_rs_fit is not None
                     else "EIS arc 최솟값 (근사)")
-        ax.axvline(rs_eis, color="#C62828", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax.axvline(rs_eis, color="#C62828", linestyle="--", linewidth=0.9, alpha=0.7)
         ax.annotate(
             f"Rs(EIS)={rs_eis:.2f} mΩ\n({label_rs})",
             xy=(rs_eis, 0),

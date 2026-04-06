@@ -110,8 +110,9 @@ def render_model_selector() -> str:
         "등가회로 모델",
         options=[
             "Extended Randles  (Rs + R1C1 + R2C2)  ← 표준",
-            "Warburg  (Rs + R1C1 + R2C2 + √t)  ← EIS 비교 시",
-            "Joint Warburg  (Rs 피팅, ramp+CC 동시)  ← EIS 일치 최적화",
+            "Warburg  (Rs + R1C1 + R2C2 + √t)",
+            "Joint Warburg  (Rs 자유 파라미터, ramp+CC 동시)",
+            "Relaxation  (CC + 이완 구간 동시 피팅)  ← 권장",
             "Simple Randles    (Rs + R1C1)",
         ],
         index=0,
@@ -119,14 +120,18 @@ def render_model_selector() -> str:
             "**Extended Randles**: Rs + R1‖C1 + R2‖C2.\n"
             "Rs는 ΔV/ΔI(p0→p1)로 고정. 기본 모델.\n\n"
             "**Warburg**: Extended + Warburg σ_W·√t 항.\n"
-            "확산 전압을 σ_W로 분리해 R2가 Rct에 더 근접. EIS 비교에 권장.\n\n"
-            "**Joint Warburg ← EIS 일치 최적화**: Rs를 고정값으로 쓰지 않고\n"
-            "ramp(p0→p2) + CC 전 구간을 동시에 피팅해 Rs, R1, R2를 함께 추출.\n"
-            "τ₁이 짧으면(< 1 ms) p0→p1 구간에 R1 충전분이 섞여 Rs가 과대추정되는데,\n"
-            "이를 자동으로 보정 → EIS Rs/Rct와 가장 가까운 결과.\n\n"
+            "확산 전압을 σ_W로 분리해 R2 과대추정 완화.\n\n"
+            "**Joint Warburg**: Rs도 자유 파라미터로 ramp+CC 전 구간 동시 피팅.\n"
+            "τ₁이 짧아 ΔV/ΔI에 R1 충전분이 섞인 경우 Rs 보정 효과.\n\n"
+            "**Relaxation ← 권장**: 충전 펄스 이후 전류 차단 → 이완 구간 전압 회복을\n"
+            "함께 피팅. 이완 구간에서는 Rs가 사라지고 순수 RC 방전만 남아\n"
+            "R1·C1·R2·C2 시정수가 독립적으로 분리됨(Hust 2021; HPPC 방법론).\n"
+            "데이터에 전류 차단 구간이 있어야 사용 가능.\n\n"
             "**Simple Randles**: Rs + R1‖C1. 빠른 스크리닝용."
         ),
     )
+    if "Relaxation" in choice:
+        return "relaxation"
     if "Joint" in choice:
         return "joint_warburg"
     if "Warburg" in choice:
@@ -134,7 +139,7 @@ def render_model_selector() -> str:
     return "simple" if "Simple" in choice else "extended"
 
 
-def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]:
+def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float, float]:
     """p2 수동 지정 및 피팅 창 설정.
 
     Parameters
@@ -143,7 +148,7 @@ def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]
 
     Returns
     -------
-    (p2_override, window_s)
+    (p2_override, window_s, relax_window_s)
     """
     use_manual = st.checkbox(
         "p2 인덱스 수동 지정",
@@ -175,7 +180,21 @@ def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]
             "• 4680/4695 같은 대형 셀은 15–20 s 이상 권장."
         ),
     ))
-    return p2_override, window_s
+
+    relax_window_s = float(st.number_input(
+        "이완 구간 창 (전류 차단 후 초)",
+        min_value=5.0,
+        max_value=300.0,
+        value=30.0,
+        step=5.0,
+        help=(
+            "**Relaxation 모델 전용.** 충전 전류 차단 후 이완 구간 길이.\n\n"
+            "이완 구간이 짧으면 느린 시정수(τ₂)가 포착되지 않아 R2·C2 오차가 큼.\n"
+            "최소 5×τ₂ 이상 권장 (τ₂ = R2·C2, 보통 수 초~수십 초).\n"
+            "데이터에 이완 구간이 없으면 이 값은 무시됩니다."
+        ),
+    ))
+    return p2_override, window_s, relax_window_s
 
 
 def render_fit_engine() -> bool:

@@ -22,6 +22,7 @@ from loader import load_charge_data, load_eis_data
 from preprocessor import (
     find_p0_p1_p2, calculate_Rs, prepare_fit_data, detect_I_set,
     prepare_joint_fit_data,
+    find_relaxation_start, prepare_relaxation_data,
 )
 from models import (
     fit_parameters, compute_nyquist,
@@ -170,8 +171,9 @@ _STATE_KEYS = [
     "cell_key", "nominal_cap_ah",
     "model_choice",
     "eis_fit_results",
-    "Rs_dcim_2wire",   # ΔV/ΔI estimate (always shown in Raw tab regardless of model)
-    "t_ramp", "I_ramp", "V_ramp",  # ramp data for joint model
+    "Rs_dcim_2wire",
+    "t_ramp", "I_ramp", "V_ramp",
+    "t_relax", "V_relax", "V_relax0", "idx_relax_start",
 ]
 for _k in _STATE_KEYS:
     if _k not in st.session_state:
@@ -212,7 +214,7 @@ with st.sidebar:
 
     st.markdown('<span class="step-badge">4</span> **고급 옵션** *(선택)*', unsafe_allow_html=True)
     st.subheader("🔧 고급 설정")
-    p2_override, window_s = render_manual_range(default_window=cell_preset["fit_window_s"])
+    p2_override, window_s, relax_window_s = render_manual_range(default_window=cell_preset["fit_window_s"])
     use_lmfit = render_fit_engine()
 
     st.markdown("---")
@@ -315,7 +317,27 @@ if run_button:
             else:
                 V0 = None
 
+            if model_choice == "relaxation":
+                idx_relax = find_relaxation_start(df, I_set, search_after_idx=idx_p2)
+                if idx_relax is not None:
+                    t_relax, V_relax, V_relax0 = prepare_relaxation_data(
+                        df, idx_relax, window_s=relax_window_s,
+                    )
+                    st.session_state.t_relax       = t_relax
+                    st.session_state.V_relax        = V_relax
+                    st.session_state.V_relax0       = V_relax0
+                    st.session_state.idx_relax_start = idx_relax
+                else:
+                    st.warning(
+                        "⚠️ **이완 구간을 찾을 수 없습니다.** 데이터에 전류 차단 구간이 없습니다.\n"
+                        "Relaxation 모델 대신 Extended Randles로 피팅합니다."
+                    )
+                    model_choice = "extended"
+
         with st.spinner("등가회로 파라미터 피팅 중…"):
+            _t_relax = st.session_state.get("t_relax") if model_choice == "relaxation" else None
+            _V_relax = st.session_state.get("V_relax") if model_choice == "relaxation" else None
+            _V_relax0 = st.session_state.get("V_relax0") if model_choice == "relaxation" else None
             result = fit_parameters(
                 t_fit, V_fit,
                 Rs=Rs,
@@ -328,8 +350,10 @@ if run_button:
                 I_ramp=st.session_state.get("I_ramp") if model_choice == "joint_warburg" else None,
                 V_ramp=st.session_state.get("V_ramp") if model_choice == "joint_warburg" else None,
                 V0=V0,
+                t_relax=_t_relax,
+                V_relax=_V_relax,
+                V_relax0=_V_relax0,
             )
-            # Joint fit: update Rs in session_state with the FITTED value
             if model_choice == "joint_warburg":
                 st.session_state.Rs = result.Rs
             st.session_state.fit_result = result
