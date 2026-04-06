@@ -152,8 +152,14 @@ def render_tab_raw() -> None:
                     help="I_set의 50% 이상 도달 첫 번째 포인트 → Rs 계산에 사용")
         col3.metric("p2 인덱스", st.session_state.idx_p2,
                     help="I_set의 99% 이내로 안정된 첫 번째 포인트 → 피팅 시작점")
-        col4.metric("Rs", f"{st.session_state.Rs * 1000:.3f} mΩ",
-                    help="옴 저항 = ΔV/ΔI (p0→p1)")
+        _rs_2wire = st.session_state.get("Rs_dcim_2wire")
+        _model = st.session_state.get("model_choice", "extended")
+        if _model == "joint_warburg" and _rs_2wire is not None:
+            col4.metric("Rs (2-wire ΔV/ΔI)", f"{_rs_2wire * 1000:.3f} mΩ",
+                        help="ΔV/ΔI(p0→p1) 추정값. Joint 모델에서는 피팅된 Rs가 Fit Result 탭에 표시됩니다.")
+        else:
+            col4.metric("Rs", f"{st.session_state.Rs * 1000:.3f} mΩ",
+                        help="옴 저항 = ΔV/ΔI (p0→p1)")
         col5.metric("I_set", f"{I_set * 1000:.1f} mA",
                     help="측정 전류 (95th percentile 추정)")
 
@@ -234,9 +240,18 @@ def render_tab_fit() -> None:
                 "개선 방법: 셀 타입 확인 / 피팅 창 조정 / lmfit 엔진 전환 / p2 수동 지정"
             )
 
+        _model_c = st.session_state.get("model_choice", "extended")
+        _rs_2w   = st.session_state.get("Rs_dcim_2wire")
+        if _model_c == "joint_warburg" and _rs_2w is not None:
+            st.info(
+                f"**Joint Warburg 모델**: Rs는 ramp+CC 전 구간 동시 피팅으로 추출된 값입니다. "
+                f"(ΔV/ΔI 2-wire 추정치: {_rs_2w*1000:.3f} mΩ → 피팅된 Rs: {result.Rs*1000:.3f} mΩ)"
+            )
         col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Rs",   f"{result.Rs * 1000:.3f} mΩ",
-                    help="전해질 저항 + 접촉 저항. 순간 전압 강하(ΔV/ΔI)에서 계산")
+        _rs_help = ("ramp+CC 전 구간 동시 피팅으로 추출된 Rs. τ₁이 짧으면 ΔV/ΔI보다 낮게 나옴."
+                    if _model_c == "joint_warburg" else
+                    "전해질 저항 + 접촉 저항. 순간 전압 강하(ΔV/ΔI)에서 계산")
+        col1.metric("Rs",   f"{result.Rs * 1000:.3f} mΩ", help=_rs_help)
         col2.metric("R₁",   f"{result.R1 * 1000:.3f} mΩ",
                     help="SEI막/전하이동 저항 (빠른 RC)")
         col3.metric("R₂",   f"{result.R2 * 1000:.3f} mΩ",

@@ -109,23 +109,26 @@ def render_model_selector() -> str:
     choice = st.selectbox(
         "등가회로 모델",
         options=[
-            "Extended Randles  (Rs + R1C1 + R2C2)  ← 권장",
+            "Extended Randles  (Rs + R1C1 + R2C2)  ← 표준",
             "Warburg  (Rs + R1C1 + R2C2 + √t)  ← EIS 비교 시",
+            "Joint Warburg  (Rs 피팅, ramp+CC 동시)  ← EIS 일치 최적화",
             "Simple Randles    (Rs + R1C1)",
         ],
         index=0,
         help=(
-            "**Extended Randles (권장)**: Rs + R1‖C1 + R2‖C2\n"
-            "→ 빠른 RC (SEI/계면 전하이동) + 느린 RC (확산) 모두 포함.\n\n"
-            "**Warburg (EIS 비교 시)**: Extended + Warburg √t 항 추가\n"
-            "→ EIS R1+R2(Rct)와 비교할 때 권장. 고체 확산에 의한 느린 "
-            "전압 상승을 σ_W·√t로 분리하므로 R2가 Rct를 반영.\n"
-            "→ 일반 2-RC 모델은 Warburg 전압을 R2로 흡수해 "
-            "EIS 대비 R1+R2가 2~3배 과대 추정되는 문제를 해소.\n\n"
-            "**Simple Randles**: Rs + R1‖C1만 포함.\n"
-            "→ 빠른 스크리닝 또는 단순 Rs/R1 확인 시 사용."
+            "**Extended Randles**: Rs + R1‖C1 + R2‖C2.\n"
+            "Rs는 ΔV/ΔI(p0→p1)로 고정. 기본 모델.\n\n"
+            "**Warburg**: Extended + Warburg σ_W·√t 항.\n"
+            "확산 전압을 σ_W로 분리해 R2가 Rct에 더 근접. EIS 비교에 권장.\n\n"
+            "**Joint Warburg ← EIS 일치 최적화**: Rs를 고정값으로 쓰지 않고\n"
+            "ramp(p0→p2) + CC 전 구간을 동시에 피팅해 Rs, R1, R2를 함께 추출.\n"
+            "τ₁이 짧으면(< 1 ms) p0→p1 구간에 R1 충전분이 섞여 Rs가 과대추정되는데,\n"
+            "이를 자동으로 보정 → EIS Rs/Rct와 가장 가까운 결과.\n\n"
+            "**Simple Randles**: Rs + R1‖C1. 빠른 스크리닝용."
         ),
     )
+    if "Joint" in choice:
+        return "joint_warburg"
     if "Warburg" in choice:
         return "warburg"
     return "simple" if "Simple" in choice else "extended"

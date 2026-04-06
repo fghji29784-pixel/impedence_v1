@@ -19,7 +19,10 @@ import traceback
 import streamlit as st
 
 from loader import load_charge_data, load_eis_data
-from preprocessor import find_p0_p1_p2, calculate_Rs, prepare_fit_data, detect_I_set
+from preprocessor import (
+    find_p0_p1_p2, calculate_Rs, prepare_fit_data, detect_I_set,
+    prepare_joint_fit_data,
+)
 from models import (
     fit_parameters, compute_nyquist,
     voltage_response_2rc, voltage_response_2rc_warburg, voltage_response_1rc,
@@ -167,6 +170,8 @@ _STATE_KEYS = [
     "cell_key", "nominal_cap_ah",
     "model_choice",
     "eis_fit_results",
+    "Rs_dcim_2wire",   # ΔV/ΔI estimate (always shown in Raw tab regardless of model)
+    "t_ramp", "I_ramp", "V_ramp",  # ramp data for joint model
 ]
 for _k in _STATE_KEYS:
     if _k not in st.session_state:
@@ -288,9 +293,10 @@ if run_button:
             st.session_state.idx_p1 = idx_p1
             st.session_state.idx_p2 = idx_p2
 
-        with st.spinner("Rs 계산 중…"):
+        with st.spinner("Rs 계산 중 (ΔV/ΔI)…"):
             Rs = calculate_Rs(df, idx_p0, idx_p1)
-            st.session_state.Rs = Rs
+            st.session_state.Rs           = Rs
+            st.session_state.Rs_dcim_2wire = Rs   # always store 2-wire estimate
 
         with st.spinner("피팅 데이터 준비 중…"):
             t_fit, V_fit, Vp2, dt = prepare_fit_data(df, idx_p2, window_s=window_s)
@@ -298,6 +304,16 @@ if run_button:
             st.session_state.V_fit = V_fit
             st.session_state.Vp2   = Vp2
             st.session_state.dt    = dt
+
+            if model_choice == "joint_warburg":
+                t_ramp, I_ramp, V_ramp, _, _, V0, _ = prepare_joint_fit_data(
+                    df, idx_p0, idx_p2, window_s=window_s,
+                )
+                st.session_state.t_ramp = t_ramp
+                st.session_state.I_ramp = I_ramp
+                st.session_state.V_ramp = V_ramp
+            else:
+                V0 = None
 
         with st.spinner("등가회로 파라미터 피팅 중…"):
             result = fit_parameters(
@@ -308,7 +324,14 @@ if run_button:
                 model=model_choice,
                 use_lmfit=use_lmfit,
                 cell_preset=cell_preset,
+                t_ramp=st.session_state.get("t_ramp") if model_choice == "joint_warburg" else None,
+                I_ramp=st.session_state.get("I_ramp") if model_choice == "joint_warburg" else None,
+                V_ramp=st.session_state.get("V_ramp") if model_choice == "joint_warburg" else None,
+                V0=V0,
             )
+            # Joint fit: update Rs in session_state with the FITTED value
+            if model_choice == "joint_warburg":
+                st.session_state.Rs = result.Rs
             st.session_state.fit_result = result
             st.session_state.nominal_cap_ah = cell_preset.get("nominal_capacity_ah")
             st.session_state.model_choice = model_choice
@@ -322,7 +345,7 @@ if run_button:
         with st.spinner("나이퀴스트 곡선 계산 중…"):
             if model_choice == "simple":
                 V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
-            elif model_choice == "warburg":
+            elif model_choice in ("warburg", "joint_warburg"):
                 V_pred = voltage_response_2rc_warburg(
                     t_fit, result.R1, result.C1, result.R2, result.C2,
                     result.sigma_W, Vp2, I_set,

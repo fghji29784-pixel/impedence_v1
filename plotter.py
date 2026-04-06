@@ -222,83 +222,92 @@ def plot_nyquist(
                      (measured EIS overlay)
     result         : optional FitResult for annotating Rs, peak frequencies
     """
-    # Compute data range using only the capacitive portion (neg_im_z ≥ 0).
-    all_re = list(re_z * 1000)
-    all_im = list(neg_im_z * 1000)
+    # ── Separate EIS capacitive / inductive regions ──────────────────────
+    eis_cap = None
+    eis_ind = None
     if eis_df is not None and len(eis_df) > 0:
-        eis_cap_df = eis_df[eis_df["neg_im_z"] >= 0]
-        all_re += list(eis_cap_df["re_z"] * 1000)
-        all_im += list(eis_cap_df["neg_im_z"] * 1000)
-    data_span = max(
-        max(all_re) - min(all_re),
-        max(all_im) - min(all_im),
-        1e-9,
-    )
-    fig_size = min(max(6.0, data_span * 0.6), 10.0)
-    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+        eis_cap = eis_df[eis_df["neg_im_z"] >= 0]
+        eis_ind = eis_df[eis_df["neg_im_z"] < 0]
+
+    # ── View bounds: capacitive data only (exclude inductive tail) ────────
+    # Inductive tail can extend to -10 mΩ or lower, completely dwarfing the
+    # capacitive arc. We compute axis limits from capacitive data and the
+    # DCIM curve, then clip after plotting.
+    view_re = list(re_z * 1000)
+    view_im = list(neg_im_z * 1000)
+    if eis_cap is not None and len(eis_cap) > 0:
+        view_re += list(eis_cap["re_z"] * 1000)
+        view_im += list(eis_cap["neg_im_z"] * 1000)
+
+    x_lo  = min(view_re)
+    x_hi  = max(view_re)
+    y_hi  = max(max(view_im), 0.1)
+    pad_x = max((x_hi - x_lo) * 0.10, 0.3)
+    pad_y = y_hi * 0.20
+
+    fig_size = min(max(6.0, (x_hi - x_lo + 2 * pad_x) * 0.5), 12.0)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.65))
 
     # DCIM model curve
     ax.plot(re_z * 1000, neg_im_z * 1000,
             color="#2196F3", linewidth=1.8, label="DCIM model", zorder=3)
 
     # EIS measured overlay (optional)
-    if eis_df is not None and len(eis_df) > 0:
-        eis_cap = eis_df[eis_df["neg_im_z"] >= 0]
-        eis_ind = eis_df[eis_df["neg_im_z"] < 0]
-        if len(eis_cap) > 0:
+    if eis_cap is not None and len(eis_cap) > 0:
+        ax.scatter(
+            eis_cap["re_z"] * 1000,
+            eis_cap["neg_im_z"] * 1000,
+            color="#F44336", s=22, zorder=4,
+            label="EIS measured (capacitive)", marker="o",
+        )
+    if eis_ind is not None and len(eis_ind) > 0:
+        # Plot inductive points only if they fall within 2× the capacitive
+        # y-range, so they don't blow up the axis scale.
+        ind_clip = eis_ind[eis_ind["neg_im_z"] >= -(y_hi * 0.5)]
+        if len(ind_clip) > 0:
             ax.scatter(
-                eis_cap["re_z"] * 1000,
-                eis_cap["neg_im_z"] * 1000,
-                color="#F44336", s=18, zorder=4,
-                label="EIS measured", marker="o",
-            )
-        if len(eis_ind) > 0:
-            ax.scatter(
-                eis_ind["re_z"] * 1000,
-                eis_ind["neg_im_z"] * 1000,
-                color="#F44336", s=10, zorder=4,
-                label=f"EIS inductive ({len(eis_ind)} pts, excluded from fit)",
-                marker="x", alpha=0.4,
+                ind_clip["re_z"] * 1000,
+                ind_clip["neg_im_z"] * 1000,
+                color="#F44336", s=10, zorder=2,
+                label=f"EIS inductive ({len(eis_ind)} pts total, clipped)",
+                marker="x", alpha=0.35,
             )
 
-    # Annotate Rs (DCIM) on x-axis
+    # Annotate Rs (DCIM)
     if result is not None:
         rs_mohm = result.Rs * 1000
-        ax.axvline(rs_mohm, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
+        ax.axvline(rs_mohm, color="#1565C0", linestyle="--", linewidth=0.9, alpha=0.7)
         ax.annotate(
             f"Rs(DCIM)={rs_mohm:.2f} mΩ",
-            xy=(rs_mohm, 0),
-            xytext=(rs_mohm + data_span * 0.03,
-                    data_span * 0.05),
-            fontsize=7,
-            color="gray",
-            arrowprops=dict(arrowstyle="->", color="gray", lw=0.6),
+            xy=(rs_mohm, 0), xytext=(rs_mohm + pad_x * 0.4, y_hi * 0.12),
+            fontsize=7.5, color="#1565C0",
+            arrowprops=dict(arrowstyle="->", color="#1565C0", lw=0.7),
         )
 
-    # Annotate Rs (EIS) — high-frequency real-axis intercept
-    if eis_df is not None and len(eis_df) > 0:
-        rs_eis_mohm = float(eis_df["re_z"].min()) * 1000
-        ax.axvline(rs_eis_mohm, color="#F44336", linestyle=":", linewidth=0.8, alpha=0.6)
+    # Annotate Rs (EIS) — use the CAPACITIVE arc's minimum Re(Z), which is
+    # the Nyquist high-frequency intercept seen in the measured arc.
+    # (eis_df["re_z"].min() would pick up the inductive tail, placing the
+    # marker outside the capacitive arc region.)
+    if eis_cap is not None and len(eis_cap) > 0:
+        rs_eis_mohm = float(eis_cap["re_z"].min()) * 1000
+        ax.axvline(rs_eis_mohm, color="#C62828", linestyle="--",
+                   linewidth=0.9, alpha=0.7)
         ax.annotate(
-            f"Rs(EIS)={rs_eis_mohm:.2f} mΩ",
+            f"Rs(EIS)≈{rs_eis_mohm:.2f} mΩ\n(capacitive arc intercept)",
             xy=(rs_eis_mohm, 0),
-            xytext=(rs_eis_mohm + data_span * 0.03,
-                    data_span * 0.12),
-            fontsize=7,
-            color="#F44336",
-            arrowprops=dict(arrowstyle="->", color="#F44336", lw=0.6),
+            xytext=(rs_eis_mohm - pad_x * 0.05, y_hi * 0.28),
+            fontsize=7, color="#C62828",
+            arrowprops=dict(arrowstyle="->", color="#C62828", lw=0.7),
         )
 
     ax.set_xlabel("Re(Z) (mΩ)", fontsize=10)
-    ax.set_ylabel("-Im(Z) (mΩ)", fontsize=10)
-    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_ylabel("−Im(Z) (mΩ)", fontsize=10)
+    ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
+    ax.set_ylim(-pad_y, y_hi + pad_y)
+    ax.axhline(0, color="k", linewidth=0.5, alpha=0.4)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8.5)
     ax.set_title("Nyquist Plot — DCIM Reconstruction", fontsize=11, fontweight="bold")
-
-    ymin, ymax = ax.get_ylim()
-    if ymin > 0:
-        ax.set_ylim(bottom=-0.02 * ymax)
 
     fig.tight_layout()
     return fig

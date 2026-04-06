@@ -228,6 +228,85 @@ def prepare_fit_data(
 
 
 # ──────────────────────────────────────────────
+# Joint fit data preparation
+# ──────────────────────────────────────────────
+
+def prepare_joint_fit_data(
+    df: pd.DataFrame,
+    idx_p0: int,
+    idx_p2: int,
+    window_s: float = 5.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """Prepare ramp + CC transient data for joint parameter fitting.
+
+    Joint fitting treats Rs as a free parameter instead of computing it from a
+    single ΔV/ΔI ratio.  The ramp phase (p0→p2) provides Rs constraints, and
+    the CC transient (p2→p2+window) constrains R1, C1, R2, C2, σ_W.
+
+    Returns
+    -------
+    t_ramp  : time array [s] from p0 (t=0) to p2, all ramp samples (3–5 pts)
+    I_ramp  : current [A] at each ramp sample
+    V_ramp  : voltage [V] at each ramp sample
+    t_cc    : CC transient time [s], 0-based from p2 (resampled)
+    V_cc    : voltage [V] during CC transient (same length as t_cc)
+    V0      : voltage at p0 [V]
+    dt      : median sampling interval [s]
+    """
+    time_all = df["time_s"].values
+    volt_all = df["voltage_V"].values
+    curr_all = df["current_A"].values
+
+    # ── dt (global median) ──────────────────────────────────────────────
+    diffs = np.diff(time_all)
+    pos_diffs = diffs[diffs > 0]
+    dt = float(np.median(pos_diffs)) if len(pos_diffs) > 0 else 1.0
+
+    # ── Ramp phase: p0 inclusive → p2 inclusive ──────────────────────────
+    pos_p0 = df.index.get_loc(idx_p0)
+    pos_p2 = df.index.get_loc(idx_p2)
+    # Include p0..p2 (small slice, typically 3 rows)
+    t_ramp_abs = time_all[pos_p0 : pos_p2 + 1]
+    I_ramp     = curr_all[pos_p0 : pos_p2 + 1]
+    V_ramp     = volt_all[pos_p0 : pos_p2 + 1]
+    # Offset time so p0 = t=0
+    t_ramp = t_ramp_abs - t_ramp_abs[0]
+    V0 = float(V_ramp[0])
+
+    # ── CC transient: p2 → p2 + window_s ────────────────────────────────
+    n_cc = max(2, int(round(window_s / dt)))
+    pos_cc_end = min(pos_p2 + n_cc, len(df))
+    t_cc_abs = time_all[pos_p2 : pos_cc_end]
+    V_cc_raw = volt_all[pos_p2 : pos_cc_end]
+    t_cc = t_cc_abs - t_cc_abs[0]   # 0-based from p2
+
+    # Resample CC if mixed rates
+    diffs_cc = np.diff(t_cc)
+    pos_diffs_cc = diffs_cc[diffs_cc > 0]
+    if len(pos_diffs_cc) >= 2:
+        dt_min_w = float(pos_diffs_cc.min())
+        dt_max_w = float(pos_diffs_cc.max())
+        if dt_max_w / dt_min_w > 10.0 and float(t_cc[-1]) > 0.0:
+            n_pts = max(500, min(2000, len(t_cc)))
+            t_cc_new = np.concatenate([
+                [0.0],
+                np.geomspace(dt_min_w, float(t_cc[-1]), n_pts - 1),
+            ])
+            V_cc_raw = np.interp(t_cc_new, t_cc, V_cc_raw)
+            t_cc = t_cc_new
+
+    return (
+        t_ramp,
+        I_ramp.astype(float),
+        V_ramp.astype(float),
+        t_cc,
+        V_cc_raw.copy(),
+        V0,
+        dt,
+    )
+
+
+# ──────────────────────────────────────────────
 # Convenience: auto-detect I_set from data
 # ──────────────────────────────────────────────
 
