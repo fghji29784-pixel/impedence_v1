@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.figure import Figure
 
-from models import FitResult, voltage_response_2rc, voltage_response_1rc
+from models import FitResult, voltage_response_2rc, voltage_response_2rc_warburg, voltage_response_1rc
 
 matplotlib.use("Agg")  # non-interactive backend for Streamlit
 
@@ -113,6 +113,11 @@ def plot_fit_result(
         t_dense = np.linspace(0.0, float(t_fit[-1]), 1000)
         if model == "simple":
             V_dense = voltage_response_1rc(t_dense, result.R1, result.C1, Vp2, I)
+        elif model == "warburg":
+            V_dense = voltage_response_2rc_warburg(
+                t_dense, result.R1, result.C1, result.R2, result.C2,
+                result.sigma_W, Vp2, I,
+            )
         else:
             V_dense = voltage_response_2rc(
                 t_dense, result.R1, result.C1, result.R2, result.C2, Vp2, I

@@ -104,24 +104,30 @@ def render_model_selector() -> str:
 
     Returns
     -------
-    'extended' or 'simple'
+    'extended', 'warburg', or 'simple'
     """
     choice = st.selectbox(
         "등가회로 모델",
         options=[
             "Extended Randles  (Rs + R1C1 + R2C2)  ← 권장",
+            "Warburg  (Rs + R1C1 + R2C2 + √t)  ← EIS 비교 시",
             "Simple Randles    (Rs + R1C1)",
         ],
         index=0,
         help=(
             "**Extended Randles (권장)**: Rs + R1‖C1 + R2‖C2\n"
-            "→ 빠른 RC (SEI/계면 전하이동) + 느린 RC (확산) 모두 포함.\n"
-            "→ 함침 불량 감지에 필요한 R₂ 추출 가능.\n\n"
+            "→ 빠른 RC (SEI/계면 전하이동) + 느린 RC (확산) 모두 포함.\n\n"
+            "**Warburg (EIS 비교 시)**: Extended + Warburg √t 항 추가\n"
+            "→ EIS R1+R2(Rct)와 비교할 때 권장. 고체 확산에 의한 느린 "
+            "전압 상승을 σ_W·√t로 분리하므로 R2가 Rct를 반영.\n"
+            "→ 일반 2-RC 모델은 Warburg 전압을 R2로 흡수해 "
+            "EIS 대비 R1+R2가 2~3배 과대 추정되는 문제를 해소.\n\n"
             "**Simple Randles**: Rs + R1‖C1만 포함.\n"
-            "→ 피팅 속도 빠르고 안정적이지만 R₂ 정보 없음.\n"
             "→ 빠른 스크리닝 또는 단순 Rs/R1 확인 시 사용."
         ),
     )
+    if "Warburg" in choice:
+        return "warburg"
     return "simple" if "Simple" in choice else "extended"
 
 

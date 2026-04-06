@@ -280,30 +280,40 @@ def render_tab_fit() -> None:
 
         st.markdown("#### 📊 전체 파라미터")
         with st.expander("파라미터 상세 테이블 열기", expanded=True):
-            param_df = pd.DataFrame({
-                "파라미터": ["Rs", "R₁", "C₁", "R₂", "C₂", "τ₁", "τ₂", "f₁", "f₂", "R²", "RMSE"],
-                "값": [
-                    f"{result.Rs * 1000:.4f} mΩ",
-                    f"{result.R1 * 1000:.4f} mΩ",
-                    f"{result.C1:.4f} F",
-                    f"{result.R2 * 1000:.4f} mΩ",
-                    f"{result.C2:.4f} F",
-                    f"{result.tau1 * 1000:.3f} ms",
-                    f"{result.tau2:.4f} s",
-                    f"{result.f1:.3f} Hz",
-                    f"{result.f2:.5f} Hz",
-                    f"{result.r2:.6f}",
-                    f"{result.rmse_mv:.4f} mV",
-                ],
-                "±1σ": [
-                    "—",
-                    f"{result.sigma_R1 * 1000:.4f} mΩ",
-                    f"{result.sigma_C1:.4f} F",
-                    f"{result.sigma_R2 * 1000:.4f} mΩ",
-                    f"{result.sigma_C2:.4f} F",
-                    "—", "—", "—", "—", "—", "—",
-                ],
-            })
+            _params = ["Rs", "R₁", "C₁", "R₂", "C₂", "τ₁", "τ₂", "f₁", "f₂", "R²", "RMSE"]
+            _vals = [
+                f"{result.Rs * 1000:.4f} mΩ",
+                f"{result.R1 * 1000:.4f} mΩ",
+                f"{result.C1:.4f} F",
+                f"{result.R2 * 1000:.4f} mΩ",
+                f"{result.C2:.4f} F",
+                f"{result.tau1 * 1000:.3f} ms",
+                f"{result.tau2:.4f} s",
+                f"{result.f1:.3f} Hz",
+                f"{result.f2:.5f} Hz",
+                f"{result.r2:.6f}",
+                f"{result.rmse_mv:.4f} mV",
+            ]
+            _errs = [
+                "—",
+                f"{result.sigma_R1 * 1000:.4f} mΩ",
+                f"{result.sigma_C1:.4f} F",
+                f"{result.sigma_R2 * 1000:.4f} mΩ",
+                f"{result.sigma_C2:.4f} F",
+                "—", "—", "—", "—", "—", "—",
+            ]
+            # Warburg 모델인 경우 σ_W 행 추가
+            if getattr(result, "sigma_W", 0.0) > 0.0:
+                _params.insert(-2, "σ_W (Warburg)")
+                _vals.insert(-2, f"{result.sigma_W * 1000:.4f} mΩ·s⁻¹/²")
+                _errs.insert(-2, "—")
+                st.info(
+                    f"**Warburg 모델**: σ_W = {result.sigma_W*1000:.4f} mΩ·s⁻¹/²\n\n"
+                    "√t 항이 고체상 확산 전압을 흡수했으므로 **R₁+R₂ ≈ EIS Rct**에 "
+                    "해당합니다. Rs 차이는 측정 방식(DCIM 2-wire vs EIS 4-wire)으로 "
+                    "인한 케이블/접촉 저항 포함 여부로 발생합니다."
+                )
+            param_df = pd.DataFrame({"파라미터": _params, "값": _vals, "±1σ": _errs})
             st.dataframe(param_df, width='stretch', hide_index=True)
 
         with st.expander("📖 각 파라미터의 물리적 의미"):

@@ -20,7 +20,10 @@ import streamlit as st
 
 from loader import load_charge_data, load_eis_data
 from preprocessor import find_p0_p1_p2, calculate_Rs, prepare_fit_data, detect_I_set
-from models import fit_parameters, compute_nyquist, voltage_response_2rc, voltage_response_1rc
+from models import (
+    fit_parameters, compute_nyquist,
+    voltage_response_2rc, voltage_response_2rc_warburg, voltage_response_1rc,
+)
 from sidebar import (
     render_cell_selector,
     render_file_upload,
@@ -319,6 +322,11 @@ if run_button:
         with st.spinner("나이퀴스트 곡선 계산 중…"):
             if model_choice == "simple":
                 V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
+            elif model_choice == "warburg":
+                V_pred = voltage_response_2rc_warburg(
+                    t_fit, result.R1, result.C1, result.R2, result.C2,
+                    result.sigma_W, Vp2, I_set,
+                )
             else:
                 V_pred = voltage_response_2rc(
                     t_fit, result.R1, result.C1, result.R2, result.C2, Vp2, I_set
@@ -326,7 +334,8 @@ if run_button:
             st.session_state.V_pred = V_pred
 
             re_z, neg_im_z = compute_nyquist(
-                result.Rs, result.R1, result.C1, result.R2, result.C2
+                result.Rs, result.R1, result.C1, result.R2, result.C2,
+                sigma_W=result.sigma_W,
             )
             st.session_state.re_z     = re_z
             st.session_state.neg_im_z = neg_im_z
