@@ -212,6 +212,7 @@ def plot_nyquist(
     neg_im_z: np.ndarray,
     eis_df: pd.DataFrame | None = None,
     result: FitResult | None = None,
+    eis_rs_fit: float | None = None,
 ) -> Figure:
     """Single-panel Nyquist plot.
 
@@ -229,11 +230,32 @@ def plot_nyquist(
         eis_cap = eis_df[eis_df["neg_im_z"] >= 0]
         eis_ind = eis_df[eis_df["neg_im_z"] < 0]
 
-    # ── View bounds: capacitive data only (exclude inductive tail) ────────
-    # Inductive tail can extend to -10 mΩ or lower, completely dwarfing the
-    # capacitive arc. We compute axis limits from capacitive data and the
-    # DCIM curve, then clip after plotting.
-    view_re = list(re_z * 1000)
+    # ── Rs values ─────────────────────────────────────────────────────────
+    rs_dcim = float(result.Rs) * 1000 if result is not None else None
+
+    # EIS Rs: prefer the FITTED Rs from the best EIS model (passed in); fall
+    # back to the minimum Re(Z) of the capacitive arc if no fit available.
+    # Do NOT use the full-data minimum — the inductive tail can have lower
+    # Re(Z) than the real Rs, giving a misleading annotation.
+    if eis_rs_fit is not None:
+        rs_eis = eis_rs_fit * 1000   # caller passes in Ω, convert to mΩ
+    elif eis_cap is not None and len(eis_cap) > 0:
+        rs_eis = float(eis_cap["re_z"].min()) * 1000
+    else:
+        rs_eis = None
+
+    # ── EIS-aligned DCIM curve ────────────────────────────────────────────
+    # The Rs difference (DCIM 2-wire > EIS 4-wire) shifts the whole DCIM arc
+    # to the right, making visual comparison impossible.  We compute a
+    # shifted copy of the DCIM curve that starts at Rs_EIS so the arc SHAPE
+    # can be compared directly with EIS data.
+    shift = 0.0
+    if rs_eis is not None and rs_dcim is not None:
+        shift = rs_dcim - rs_eis     # mΩ; positive = DCIM starts too far right
+    re_z_shifted = re_z * 1000 - shift   # EIS-aligned DCIM curve
+
+    # ── View bounds: capacitive data + EIS-aligned DCIM ───────────────────
+    view_re = list(re_z_shifted)
     view_im = list(neg_im_z * 1000)
     if eis_cap is not None and len(eis_cap) > 0:
         view_re += list(eis_cap["re_z"] * 1000)
@@ -242,60 +264,64 @@ def plot_nyquist(
     x_lo  = min(view_re)
     x_hi  = max(view_re)
     y_hi  = max(max(view_im), 0.1)
-    pad_x = max((x_hi - x_lo) * 0.10, 0.3)
+    pad_x = max((x_hi - x_lo) * 0.10, 0.5)
     pad_y = y_hi * 0.20
 
-    fig_size = min(max(6.0, (x_hi - x_lo + 2 * pad_x) * 0.5), 12.0)
-    fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.65))
+    fig_size = min(max(6.0, (x_hi - x_lo + 2 * pad_x) * 0.5), 14.0)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.7))
 
-    # DCIM model curve
-    ax.plot(re_z * 1000, neg_im_z * 1000,
-            color="#2196F3", linewidth=1.8, label="DCIM model", zorder=3)
-
-    # EIS measured overlay (optional)
+    # ── EIS measured data ─────────────────────────────────────────────────
     if eis_cap is not None and len(eis_cap) > 0:
         ax.scatter(
             eis_cap["re_z"] * 1000,
             eis_cap["neg_im_z"] * 1000,
-            color="#F44336", s=22, zorder=4,
+            color="#F44336", s=26, zorder=5,
             label="EIS measured (capacitive)", marker="o",
         )
     if eis_ind is not None and len(eis_ind) > 0:
-        # Plot inductive points only if they fall within 2× the capacitive
-        # y-range, so they don't blow up the axis scale.
         ind_clip = eis_ind[eis_ind["neg_im_z"] >= -(y_hi * 0.5)]
         if len(ind_clip) > 0:
             ax.scatter(
                 ind_clip["re_z"] * 1000,
                 ind_clip["neg_im_z"] * 1000,
                 color="#F44336", s=10, zorder=2,
-                label=f"EIS inductive ({len(eis_ind)} pts total, clipped)",
+                label=f"EIS inductive ({len(eis_ind)} pts, clipped)",
                 marker="x", alpha=0.35,
             )
 
-    # Annotate Rs (DCIM)
-    if result is not None:
-        rs_mohm = result.Rs * 1000
-        ax.axvline(rs_mohm, color="#1565C0", linestyle="--", linewidth=0.9, alpha=0.7)
+    # ── DCIM curves ───────────────────────────────────────────────────────
+    if shift != 0.0 and abs(shift) > 0.01:
+        # Shifted (EIS-aligned) — primary curve for visual comparison
+        ax.plot(re_z_shifted, neg_im_z * 1000,
+                color="#1E88E5", linewidth=2.0, zorder=4,
+                label=f"DCIM (EIS Rs 보정, −{shift:.2f} mΩ)")
+        # Original position — dashed, for reference
+        ax.plot(re_z * 1000, neg_im_z * 1000,
+                color="#90CAF9", linewidth=1.2, zorder=3, linestyle="--",
+                label=f"DCIM (원래 위치, Rs={rs_dcim:.2f} mΩ)")
+    else:
+        ax.plot(re_z * 1000, neg_im_z * 1000,
+                color="#1E88E5", linewidth=2.0, zorder=4, label="DCIM model")
+
+    # ── Rs vertical lines ─────────────────────────────────────────────────
+    if rs_dcim is not None:
+        ax.axvline(rs_dcim, color="#1565C0", linestyle=":", linewidth=0.9, alpha=0.6)
         ax.annotate(
-            f"Rs(DCIM)={rs_mohm:.2f} mΩ",
-            xy=(rs_mohm, 0), xytext=(rs_mohm + pad_x * 0.4, y_hi * 0.12),
+            f"Rs(DCIM)={rs_dcim:.2f} mΩ",
+            xy=(rs_dcim, 0),
+            xytext=(rs_dcim + pad_x * 0.3, y_hi * 0.10),
             fontsize=7.5, color="#1565C0",
             arrowprops=dict(arrowstyle="->", color="#1565C0", lw=0.7),
         )
 
-    # Annotate Rs (EIS) — use the CAPACITIVE arc's minimum Re(Z), which is
-    # the Nyquist high-frequency intercept seen in the measured arc.
-    # (eis_df["re_z"].min() would pick up the inductive tail, placing the
-    # marker outside the capacitive arc region.)
-    if eis_cap is not None and len(eis_cap) > 0:
-        rs_eis_mohm = float(eis_cap["re_z"].min()) * 1000
-        ax.axvline(rs_eis_mohm, color="#C62828", linestyle="--",
-                   linewidth=0.9, alpha=0.7)
+    if rs_eis is not None:
+        label_rs = ("피팅된 EIS Rs" if eis_rs_fit is not None
+                    else "EIS arc 최솟값 (근사)")
+        ax.axvline(rs_eis, color="#C62828", linestyle=":", linewidth=0.9, alpha=0.7)
         ax.annotate(
-            f"Rs(EIS)≈{rs_eis_mohm:.2f} mΩ\n(capacitive arc intercept)",
-            xy=(rs_eis_mohm, 0),
-            xytext=(rs_eis_mohm - pad_x * 0.05, y_hi * 0.28),
+            f"Rs(EIS)={rs_eis:.2f} mΩ\n({label_rs})",
+            xy=(rs_eis, 0),
+            xytext=(rs_eis - pad_x * 0.1, y_hi * 0.30),
             fontsize=7, color="#C62828",
             arrowprops=dict(arrowstyle="->", color="#C62828", lw=0.7),
         )
@@ -306,7 +332,7 @@ def plot_nyquist(
     ax.set_ylim(-pad_y, y_hi + pad_y)
     ax.axhline(0, color="k", linewidth=0.5, alpha=0.4)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8.5)
+    ax.legend(fontsize=8.5, loc="upper right")
     ax.set_title("Nyquist Plot — DCIM Reconstruction", fontsize=11, fontweight="bold")
 
     fig.tight_layout()
@@ -326,29 +352,24 @@ def plot_eis_fit(eis_result) -> Figure:
     """
     re_meas  = eis_result.re_z_meas * 1000
     im_meas  = eis_result.neg_im_z_meas * 1000
-    re_fit   = np.real(eis_result.Z_fit) * 1000
-    im_fit   = -np.imag(eis_result.Z_fit) * 1000
 
-    # Compute data span for square aspect
-    all_re = np.concatenate([re_meas, re_fit])
-    all_im = np.concatenate([im_meas, im_fit])
-    data_span = max(all_re.max() - all_re.min(), all_im.max() - all_im.min(), 1e-9)
-    fig_size = float(np.clip(data_span * 0.6, 5.0, 10.0))
+    # ── Separate capacitive / inductive measured points ──────────────────
+    cap_mask_meas = eis_result.neg_im_z_meas >= 0
+    re_cap  = re_meas[cap_mask_meas]
+    im_cap  = im_meas[cap_mask_meas]
+    re_ind  = re_meas[~cap_mask_meas]
+    im_ind  = im_meas[~cap_mask_meas]
 
-    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
-
-    # Measured data
-    ax.scatter(re_meas, im_meas,
-               color="#F44336", s=22, zorder=4, label="EIS 실측", alpha=0.85)
-
-    # Fitted curve: recompute on dense log-spaced grid to avoid index-length
-    # mismatch (Z_fit was computed on filtered freq_fit, not full eis_result.freq)
+    # ── Fitted curve: dense grid EXTENDED to higher frequencies ──────────
+    # We extend 2 decades above the measured f_max so the model arc is shown
+    # all the way back to the Rs intercept, making the fit start "앞으로"
+    # (to the left of) the measured capacitive points.
     from eis_fitter import MODELS as _EIS_MODELS
     import math as _math
     try:
         _f_lo = max(float(eis_result.freq.min()), 1e-4)
-        _f_hi = float(eis_result.freq.max())
-        _f_dense = np.logspace(_math.log10(_f_lo), _math.log10(_f_hi), 400)
+        _f_hi = float(eis_result.freq.max()) * 100   # 2 decades extrapolation
+        _f_dense = np.logspace(_math.log10(_f_lo), _math.log10(_f_hi), 600)
         _omega_dense = 2.0 * np.pi * _f_dense
         _Z_dense = _EIS_MODELS[eis_result.model_name]["z_func"](
             eis_result.param_values, _omega_dense
@@ -356,20 +377,54 @@ def plot_eis_fit(eis_result) -> Figure:
         re_fit_line = np.real(_Z_dense) * 1000
         im_fit_line = -np.imag(_Z_dense) * 1000
     except Exception:
-        # fallback: use Z_fit directly (may be shorter than freq)
-        re_fit_line = re_fit
-        im_fit_line = im_fit
-    ax.plot(re_fit_line, im_fit_line,
-            color="#2196F3", linewidth=2.0, zorder=3, label=f"피팅: {eis_result.model_name}")
+        re_fit_line = np.real(eis_result.Z_fit) * 1000
+        im_fit_line = -np.imag(eis_result.Z_fit) * 1000
+
+    # ── View bounds: capacitive measured + capacitive part of fit curve ───
+    fit_cap_mask = im_fit_line >= -0.05   # show fit curve down to near x-axis
+    view_re = list(re_cap) + list(re_fit_line[fit_cap_mask])
+    view_im = list(im_cap) + list(im_fit_line[fit_cap_mask])
+    if len(view_re) == 0:
+        view_re = list(re_meas)
+        view_im = list(im_meas)
+    x_lo = min(view_re)
+    x_hi = max(view_re)
+    y_hi = max(max(view_im), 0.1)
+    # Clip inductive display: show only down to −30% of y_hi
+    y_lo_clip = -y_hi * 0.30
+    pad_x = max((x_hi - x_lo) * 0.08, 0.3)
+    pad_y = y_hi * 0.15
+
+    fig_size = float(np.clip(max(x_hi - x_lo, y_hi) * 0.55, 5.0, 10.0))
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+
+    # Measured data — capacitive (solid) and inductive (faded x)
+    if len(re_cap) > 0:
+        ax.scatter(re_cap, im_cap,
+                   color="#F44336", s=22, zorder=5, label="EIS 실측 (capacitive)", alpha=0.9)
+    if len(re_ind) > 0:
+        ind_show = im_ind >= y_lo_clip
+        if ind_show.any():
+            ax.scatter(re_ind[ind_show], im_ind[ind_show],
+                       color="#F44336", s=10, zorder=2,
+                       label=f"EIS inductive ({(~cap_mask_meas).sum()} pts, clipped)",
+                       marker="x", alpha=0.3)
+
+    # Fitted curve (extrapolated, capacitive portion only)
+    fit_plot_mask = im_fit_line >= y_lo_clip
+    ax.plot(re_fit_line[fit_plot_mask], im_fit_line[fit_plot_mask],
+            color="#2196F3", linewidth=2.0, zorder=4,
+            label=f"피팅: {eis_result.model_name} (고주파 외삽 포함)")
 
     # Rs annotation
     rs_val = eis_result.params_dict.get("Rs", eis_result.re_z_meas.min())
-    ax.axvline(rs_val * 1000, color="gray", linestyle=":", linewidth=0.8, alpha=0.7)
+    rs_mohm = rs_val * 1000
+    ax.axvline(rs_mohm, color="gray", linestyle="--", linewidth=0.9, alpha=0.7)
     ax.annotate(
-        f"Rs = {rs_val * 1000:.2f} mΩ",
-        xy=(rs_val * 1000, 0),
-        xytext=(rs_val * 1000 + data_span * 0.04, data_span * 0.05),
-        fontsize=7, color="gray",
+        f"Rs(fit)={rs_mohm:.2f} mΩ",
+        xy=(rs_mohm, 0),
+        xytext=(rs_mohm + pad_x * 0.3, y_hi * 0.08),
+        fontsize=7.5, color="gray",
         arrowprops=dict(arrowstyle="->", color="gray", lw=0.6),
     )
 
@@ -384,18 +439,16 @@ def plot_eis_fit(eis_result) -> Figure:
                       edgecolor="gray", alpha=0.85))
 
     ax.set_xlabel("Re(Z) (mΩ)", fontsize=10)
-    ax.set_ylabel("-Im(Z) (mΩ)", fontsize=10)
-    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_ylabel("−Im(Z) (mΩ)", fontsize=10)
+    ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
+    ax.set_ylim(y_lo_clip - pad_y * 0.5, y_hi + pad_y)
+    ax.axhline(0, color="k", linewidth=0.5, alpha=0.4)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8.5)
     ax.set_title(
         f"EIS Nyquist — {eis_result.model_label}",
         fontsize=10, fontweight="bold",
     )
-
-    ymin, ymax = ax.get_ylim()
-    if ymin > 0:
-        ax.set_ylim(bottom=-0.02 * ymax)
 
     fig.tight_layout()
     return fig

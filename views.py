@@ -390,6 +390,14 @@ def render_tab_nyquist() -> None:
     )
 
     if st.session_state.re_z is not None:
+        # ── EIS Rs: prefer fitted value from best EIS model ───────────────
+        eis_rs_fit = None
+        eis_fit_res = st.session_state.get("eis_fit_results")
+        if eis_fit_res:
+            best_conv = next((r for r in eis_fit_res if r.converged), None)
+            if best_conv is not None:
+                eis_rs_fit = best_conv.params_dict.get("Rs") or best_conv.Rs
+
         col_plot, col_info = st.columns([1.5, 1])
 
         with col_plot:
@@ -398,6 +406,7 @@ def render_tab_nyquist() -> None:
                 st.session_state.neg_im_z,
                 eis_df=st.session_state.df_eis,
                 result=st.session_state.fit_result,
+                eis_rs_fit=eis_rs_fit,
             )
             st.pyplot(fig)
 
@@ -415,21 +424,41 @@ def render_tab_nyquist() -> None:
 | 첫 번째 반원 지름 | **R₁** (SEI·계면) |
 | 두 번째 반원 지름 | **R₂** (확산 저항) |
 | 오른쪽 끝 | Rs + R₁ + R₂ (DC 총 저항) |
+
+**EIS-보정 DCIM 곡선 (파란 실선):**
+DCIM은 2-wire 측정이라 Rs에 케이블/접촉 저항이 포함됩니다.
+EIS Rs(4-wire)와 맞춰 x축 오프셋 보정한 곡선입니다.
+아크 **모양(R₁, R₂)** 비교에 사용하세요.
 """)
 
         if st.session_state.df_eis is not None:
-            df_eis   = st.session_state.df_eis
-            result   = st.session_state.fit_result
+            df_eis  = st.session_state.df_eis
+            result  = st.session_state.fit_result
 
-            rs_eis   = float(df_eis["re_z"].min()) * 1000
-            rs_dcim  = result.Rs * 1000
+            # EIS Rs: fitted > capacitive arc min > full min (우선순위)
+            df_eis_cap = df_eis[df_eis["neg_im_z"] >= 0]
+            if eis_rs_fit is not None:
+                rs_eis     = eis_rs_fit * 1000
+                rs_eis_src = "EIS 피팅"
+            elif len(df_eis_cap) > 0:
+                rs_eis     = float(df_eis_cap["re_z"].min()) * 1000
+                rs_eis_src = "capacitive arc 최솟값"
+            else:
+                rs_eis     = float(df_eis["re_z"].min()) * 1000
+                rs_eis_src = "전체 데이터 최솟값"
+            rs_dcim = result.Rs * 1000
 
-            idx_peak    = df_eis["neg_im_z"].idxmax()
-            re_at_peak  = float(df_eis.loc[idx_peak, "re_z"]) * 1000
-            r_arc_eis   = re_at_peak - rs_eis
-            r_arc_dcim  = (result.R1 + result.R2) * 1000
+            # R1+R2: EIS arc width = Re(Z) at peak - Rs
+            if len(df_eis_cap) > 0:
+                idx_peak   = df_eis_cap["neg_im_z"].idxmax()
+                re_at_peak = float(df_eis_cap.loc[idx_peak, "re_z"]) * 1000
+                r_arc_eis  = re_at_peak - rs_eis
+            else:
+                r_arc_eis  = 0.0
+            r_arc_dcim = (result.R1 + result.R2) * 1000
 
             st.subheader("📊 EIS vs DCIM 수치 비교")
+            st.caption(f"EIS Rs 출처: {rs_eis_src}")
             cmp_df = pd.DataFrame({
                 "파라미터": ["Rs (Ω 저항)", "R₁+R₂ (아크 폭, 근사)"],
                 "EIS [mΩ]":  [f"{rs_eis:.3f}",    f"{r_arc_eis:.3f}"],
@@ -451,11 +480,11 @@ def render_tab_nyquist() -> None:
                     st.warning(
                         f"⚠️ **Rs 불일치 경고**: DCIM({rs_dcim:.2f} mΩ) / EIS({rs_eis:.2f} mΩ) "
                         f"= {rs_ratio:.2f}×  (허용 범위: 0.5×~2.0×)\n\n"
-                        "가능한 원인:\n"
-                        "- 충전 파일과 EIS 파일이 **서로 다른 셀**에서 측정됨\n"
-                        "- **측정 온도** 또는 **SOC 차이**가 매우 큼\n"
-                        "- EIS 측정 시 **접촉 저항** 포함 (2선 연결)\n"
-                        "두 파일이 동일 셀·동일 조건의 데이터인지 확인하세요."
+                        "주요 원인:\n"
+                        "- **2-wire DCIM** vs **4-wire EIS**: 케이블/접촉 저항이 DCIM Rs에 포함\n"
+                        "- 측정 온도·SOC 차이\n\n"
+                        "Nyquist 플롯의 **EIS-보정 곡선(파란 실선)**은 이 차이를 보정하여\n"
+                        "아크 모양 비교에 사용할 수 있습니다."
                     )
 
         with st.expander("📋 나이퀴스트 데이터 테이블"):

@@ -456,11 +456,17 @@ def fit_eis_all_models(
         # Fallback: use all data if almost no capacitive points
         freq_fit, re_z_fit, nim_fit = freq, re_z, neg_im_z
 
+    # Use CAPACITIVE region minimum as Rs lower bound.
+    # The inductive region can have Re(Z) < Rs (due to cable inductance), so
+    # using the full-data minimum would let the optimizer push Rs below the
+    # physical Nyquist intercept.  The capacitive arc's min Re(Z) ≈ true Rs.
+    rs_min_cap = float(re_z_fit.min()) if len(re_z_fit) > 0 else rs_min_full
+
     results = []
     for name in MODELS:
         try:
             r = fit_eis_model(freq_fit, re_z_fit, nim_fit, name,
-                              rs_min_bound=rs_min_full)
+                              rs_min_bound=rs_min_cap)
             # Store the FULL (unfiltered) measured data for display
             r.freq          = freq
             r.re_z_meas     = re_z
