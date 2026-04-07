@@ -210,6 +210,23 @@ _sequential_peel_p0(t_relax, V_relax0 - V_relax, 0.0, I_set, ...)
 
 **주의**: Relaxation 모델도 이제 Warburg 계수를 가지므로, `views.py`의 σ_W 행 표시 로직(`getattr(result, "sigma_W", 0.0) > 0.0` 조건)이 자동으로 적용됨.
 
+### [2026-04-06] matplotlib 그래프 내 한글 → 영어 변환 (commit `324ea11`)
+
+**증상**: matplotlib 기본 폰트에 한글 글리프 없음 → 그래프 범례/주석이 □□□로 깨짐.
+
+**수정 파일**: `plotter.py`
+
+| 위치 | 변경 전 | 변경 후 |
+|------|---------|---------|
+| `plot_fit_result` converge note | `수렴 실패 — 초기값` | `Not converged — initial guess` |
+| `plot_fit_result` dense curve | `warburg` 모델만 Warburg 사용 | `warburg/joint_warburg/relaxation` 모두 Warburg 사용 (부수 버그 수정) |
+| `plot_nyquist` DCIM legend | `DCIM 재현` | `DCIM model` |
+| `plot_nyquist` EIS Rs annotation | `피팅된 EIS Rs` / `EIS arc 최솟값 (근사)` | `EIS Rs (fitted)` / `EIS arc min (approx)` |
+| `plot_eis_fit` measured legend | `EIS 실측 (capacitive)` | `EIS measured (capacitive)` |
+| `plot_eis_fit` fit legend | `피팅: {name} (고주파 외삽 포함)` | `Fit: {name} (high-freq extrapolated)` |
+
+**원칙**: matplotlib 그래프 내 텍스트는 모두 영어로 유지. Streamlit UI 텍스트(st.markdown, st.metric 등)는 브라우저 렌더링이므로 한글 무방.
+
 - **lmfit 경로**: `use_lmfit=True` 분기 코드가 `models.py`에 진입점 존재하나, 내부 피팅 함수들이 아직 lmfit API 미구현. scipy로 fallback 가능성 있음 — 확인 필요.
 
 - **4695 셀 프리셋**: `CELL_PRESETS`에 정의되어 있으나 실제 셀 데이터로 검증 미완료
