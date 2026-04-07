@@ -227,6 +227,25 @@ _sequential_peel_p0(t_relax, V_relax0 - V_relax, 0.0, I_set, ...)
 
 **원칙**: matplotlib 그래프 내 텍스트는 모두 영어로 유지. Streamlit UI 텍스트(st.markdown, st.metric 등)는 브라우저 렌더링이므로 한글 무방.
 
+### [2026-04-06] 3RC 등가회로 모델 추가 (commit `f8799ee`)
+
+**배경**: EIS 피팅에서 3RC 모델(AIC=-1955, R²=0.9858)이 2RC+CPE와 거의 동등한 성능을 보이며 파라미터가 물리적으로 더 해석 가능함. DCIM 시간영역에서도 3번째 RC 아크를 직접 피팅할 수 있도록 추가.
+
+**추가 내용**:
+- `FitResult`: `R3, C3, sigma_R3, sigma_C3` (default 0/nan), `tau3, f3` 필드 추가
+- `CELL_PRESETS`: 모든 셀 타입에 `p0_3rc/lb_3rc/ub_3rc` 추가
+- `voltage_response_3rc(t, R1, C1, R2, C2, R3, C3, Vp2, I)` 신규
+- `impedance_3rc(f, Rs, R1, C1, R2, C2, R3, C3)` 신규
+- `_fit_3rc()`: sequential-peel으로 R1/C1/R2/C2 초기값 추정, 잔차에서 R3/C3 추정
+- `compute_nyquist()`: `R3, C3` 파라미터 추가 (R3>0이면 `impedance_3rc` 사용)
+- `sidebar.py`: "3RC (Rs+R1C1+R2C2+R3C3)" 모델 선택 옵션 추가
+- `views.py`: 파라미터 테이블에 R3, C3, τ3, f3 행 조건부 표시
+
+**주의사항**:
+- 3RC 모델은 τ3 << 피팅 창일 때만 R3/C3 분리 가능
+- EIS 3RC에서 τ3 ≈ 960s (C3=542F)이면 30s 피팅 창으로는 R3가 느린 드리프트를 흡수 → Warburg 모델과 병행 사용 권장
+- Rs 오차는 2-wire 측정 특성상 ~2.5 mΩ 고정 — 샘플링 속도 개선으로 해결 불가 (4-wire 셋업만 해결 가능)
+
 - **lmfit 경로**: `use_lmfit=True` 분기 코드가 `models.py`에 진입점 존재하나, 내부 피팅 함수들이 아직 lmfit API 미구현. scipy로 fallback 가능성 있음 — 확인 필요.
 
 - **4695 셀 프리셋**: `CELL_PRESETS`에 정의되어 있으나 실제 셀 데이터로 검증 미완료
