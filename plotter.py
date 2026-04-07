@@ -113,7 +113,7 @@ def plot_fit_result(
         t_dense = np.linspace(0.0, float(t_fit[-1]), 1000)
         if model == "simple":
             V_dense = voltage_response_1rc(t_dense, result.R1, result.C1, Vp2, I)
-        elif model == "warburg":
+        elif model in ("warburg", "joint_warburg", "relaxation"):
             V_dense = voltage_response_2rc_warburg(
                 t_dense, result.R1, result.C1, result.R2, result.C2,
                 result.sigma_W, Vp2, I,
@@ -149,7 +149,7 @@ def plot_fit_result(
     ax_fit.plot(t_dense_ms, V_dense_mv, color="#F44336", linewidth=1.8,
                 linestyle="--", label="Fitted", zorder=4)
 
-    converge_note = "" if result.converged else "  ⚠️ 수렴 실패 — 초기값"
+    converge_note = "" if result.converged else "  ⚠️ Not converged — initial guess"
     ax_fit.set_ylabel("Voltage (mV)")
     ax_fit.legend(fontsize=8)
     ax_fit.grid(True, alpha=0.3)
@@ -281,7 +281,7 @@ def plot_nyquist(
 
     # ── DCIM reconstructed curve ──────────────────────────────────────────
     ax.plot(re_z * 1000, neg_im_z * 1000,
-            color="#1E88E5", linewidth=2.0, zorder=4, label="DCIM 재현")
+            color="#1E88E5", linewidth=2.0, zorder=4, label="DCIM model")
 
     # ── Rs vertical lines ─────────────────────────────────────────────────
     if rs_dcim is not None:
@@ -295,8 +295,8 @@ def plot_nyquist(
         )
 
     if rs_eis is not None:
-        label_rs = ("피팅된 EIS Rs" if eis_rs_fit is not None
-                    else "EIS arc 최솟값 (근사)")
+        label_rs = ("EIS Rs (fitted)" if eis_rs_fit is not None
+                    else "EIS arc min (approx)")
         ax.axvline(rs_eis, color="#C62828", linestyle="--", linewidth=0.9, alpha=0.7)
         ax.annotate(
             f"Rs(EIS)={rs_eis:.2f} mΩ\n({label_rs})",
@@ -381,7 +381,7 @@ def plot_eis_fit(eis_result) -> Figure:
     # Measured data — capacitive (solid) and inductive (faded x)
     if len(re_cap) > 0:
         ax.scatter(re_cap, im_cap,
-                   color="#F44336", s=22, zorder=5, label="EIS 실측 (capacitive)", alpha=0.9)
+                   color="#F44336", s=22, zorder=5, label="EIS measured (capacitive)", alpha=0.9)
     if len(re_ind) > 0:
         ind_show = im_ind >= y_lo_clip
         if ind_show.any():
@@ -394,7 +394,7 @@ def plot_eis_fit(eis_result) -> Figure:
     fit_plot_mask = im_fit_line >= y_lo_clip
     ax.plot(re_fit_line[fit_plot_mask], im_fit_line[fit_plot_mask],
             color="#2196F3", linewidth=2.0, zorder=4,
-            label=f"피팅: {eis_result.model_name} (고주파 외삽 포함)")
+            label=f"Fit: {eis_result.model_name} (high-freq extrapolated)")
 
     # Rs annotation
     rs_val = eis_result.params_dict.get("Rs", eis_result.re_z_meas.min())
