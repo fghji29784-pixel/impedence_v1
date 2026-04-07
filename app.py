@@ -369,7 +369,7 @@ if run_button:
         with st.spinner("나이퀴스트 곡선 계산 중…"):
             if model_choice == "simple":
                 V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
-            elif model_choice in ("warburg", "joint_warburg"):
+            elif model_choice in ("warburg", "joint_warburg", "relaxation"):
                 V_pred = voltage_response_2rc_warburg(
                     t_fit, result.R1, result.C1, result.R2, result.C2,
                     result.sigma_W, Vp2, I_set,

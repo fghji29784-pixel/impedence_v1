@@ -831,28 +831,52 @@ def _fit_relaxation(
     - Sequential peeling applied to the relaxation tail gives better p0 for
       the joint optimisation.
 
+    The CC phase uses voltage_response_2rc_warburg (adds σ_W as 5th parameter)
+    to absorb the √t diffusion drift that would otherwise inflate R2 and C2.
+    The relaxation phase uses pure voltage_response_relaxation (no Warburg),
+    which cleanly constrains τ1 and τ2.
+
     The joint target vector is [V_cc, V_relax], weighted equally.
     Rs is still fixed (from ΔV/ΔI or joint_warburg).
     """
-    lb = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3])
-    ub = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0])
+    lb_rc = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3])
+    ub_rc = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0])
 
     # Sequential peel on RELAXATION signal (cleaner than CC for τ estimation)
-    p0_peel = _sequential_peel_p0(t_relax, -V_relax + V_relax0 + (V_relax[0] - V_relax0),
-                                  0.0, -I_set, lb, ub)
+    # V_relax0 - V_relax = positive increasing signal (magnitude of voltage drop)
+    p0_peel = _sequential_peel_p0(
+        t_relax, V_relax0 - V_relax, 0.0, I_set, lb_rc, ub_rc
+    )
     # Fall back: peel on CC signal
     if p0_peel is None:
-        p0_peel = _sequential_peel_p0(t_cc, V_cc, Vp2, I_set, lb, ub)
-    p0 = p0_peel if p0_peel is not None else cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
+        p0_peel = _sequential_peel_p0(t_cc, V_cc, Vp2, I_set, lb_rc, ub_rc)
+    p0_rc = p0_peel if p0_peel is not None else cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0])
+
+    # Warburg initial guess from CC voltage span
+    T_window = float(t_cc[-1]) if len(t_cc) > 1 and t_cc[-1] > 0 else 1.0
+    V_span = max(float(np.max(V_cc)) - float(V_cc[0]), 1e-6)
+    I_pos = max(abs(I_set), 1e-9)
+    sigma_W_est = float(np.clip(
+        V_span * 0.30 / (I_pos * math.sqrt(T_window)), 1e-5, 0.5
+    ))
+
+    p0 = p0_rc + [sigma_W_est]
+    lb = lb_rc + [0.0]
+    ub = ub_rc + [1.0]
 
     # Build combined target
     V_target = np.concatenate([V_cc, V_relax])
-    n_cc     = len(V_cc)
 
-    def model_combined(_, R1, C1, R2, C2):
-        V_cc_model = voltage_response_2rc(t_cc, R1, C1, R2, C2, Vp2, I_set)
-        V_rx_model = voltage_response_relaxation(t_relax, R1, C1, R2, C2,
-                                                  V_relax0, I_set)
+    def model_combined(_, R1, C1, R2, C2, sigma_W):
+        # CC phase: 2RC + Warburg (√t diffusion present during charging)
+        V_cc_model = voltage_response_2rc_warburg(
+            t_cc, R1, C1, R2, C2, sigma_W, Vp2, I_set
+        )
+        # Relaxation phase: pure RC (no Warburg — diffusion contribution
+        # is small/symmetric during rest and cleanly separates τ1, τ2)
+        V_rx_model = voltage_response_relaxation(
+            t_relax, R1, C1, R2, C2, V_relax0, I_set
+        )
         return np.concatenate([V_cc_model, V_rx_model])
 
     x_dummy = np.arange(len(V_target), dtype=float)
@@ -864,22 +888,29 @@ def _fit_relaxation(
             use_lmfit = False
 
     converged = True
-    R1, C1, R2, C2 = p0
+    R1, C1, R2, C2, sigma_W = p0
     sigma = [float("nan")] * 4
 
     if use_lmfit:
         import lmfit
         params = lmfit.Parameters()
-        for name, p0v, lbv, ubv in zip(["R1", "C1", "R2", "C2"], p0, lb, ub):
+        for name, p0v, lbv, ubv in zip(["R1", "C1", "R2", "C2", "sigma_W"], p0, lb, ub):
             params.add(name, value=p0v, min=lbv, max=ubv)
 
         def residual(p):
-            return model_combined(x_dummy, p["R1"], p["C1"], p["R2"], p["C2"]) - V_target
+            return (
+                model_combined(
+                    x_dummy, p["R1"], p["C1"], p["R2"], p["C2"], p["sigma_W"]
+                )
+                - V_target
+            )
 
         lm = lmfit.minimize(residual, params, method="least_squares")
         p  = lm.params
-        R1, C1, R2, C2 = (p["R1"].value, p["C1"].value,
-                           p["R2"].value, p["C2"].value)
+        R1, C1, R2, C2, sigma_W = (
+            p["R1"].value, p["C1"].value,
+            p["R2"].value, p["C2"].value, p["sigma_W"].value,
+        )
         converged = lm.success
     else:
         try:
@@ -888,15 +919,15 @@ def _fit_relaxation(
                 p0=p0, bounds=(lb, ub),
                 method="trf", maxfev=20000,
             )
-            R1, C1, R2, C2 = popt
-            sigma = np.sqrt(np.diag(pcov)).tolist()
+            R1, C1, R2, C2, sigma_W = popt
+            sigma = np.sqrt(np.diag(pcov))[:4].tolist()
         except (RuntimeError, ValueError):
             converged = False
 
     # Report quality on CC portion only (primary measurement)
-    V_cc_pred = voltage_response_2rc(t_cc, R1, C1, R2, C2, Vp2, I_set)
+    V_cc_pred = voltage_response_2rc_warburg(t_cc, R1, C1, R2, C2, sigma_W, Vp2, I_set)
 
-    return FitResult(
+    result = FitResult(
         Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
         sigma_R1=sigma[0], sigma_C1=sigma[1],
         sigma_R2=sigma[2], sigma_C2=sigma[3],
@@ -904,6 +935,8 @@ def _fit_relaxation(
         rmse_mv=_rmse_mv(V_cc, V_cc_pred),
         converged=converged,
     )
+    result.sigma_W = float(sigma_W)
+    return result
 
 
 def _fit_1rc(
