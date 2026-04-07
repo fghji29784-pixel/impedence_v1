@@ -168,6 +168,48 @@ DCIM_rewrite/
 
 - **Relaxation 모델**: 구현 완료, 단 **전류 차단(HPPC) 데이터** 필요 — 일반 CC 충전 데이터에서는 자동으로 Extended로 폴백
 
+---
+
+## 6. 버그 수정 이력
+
+### [2026-04-06] Relaxation 모델 CC 구간 Warburg 누락 버그 (commit `502bd99`)
+
+**증상**:
+- `relaxation` 모델 선택 시 R² ≈ 0.89 (불량), RMSE 0.35 mV
+- C2 = 1531 F (물리적으로 비현실적인 값)
+- R1+R2 = 10.2 mΩ vs EIS R1+R2 = 1.8 mΩ → **468% 오차**
+- 피팅 곡선(빨간 점선)이 실측 데이터(파란 점)보다 전 구간에서 낮음 (잔차 음수)
+
+**근본 원인**:
+`_fit_relaxation`의 `model_combined` 내부에서 CC 구간을 `voltage_response_2rc` (순수 2RC)로 피팅했으나,
+실제 CC 전압에는 **√t Warburg 확산 성분**이 포함되어 있었음.
+Warburg 항이 없으면 옵티마이저가 선형 드리프트를 R2로 흡수 → C2 폭발(τ2 = R2×C2를 맞추기 위해) → R2·C2 부정확.
+
+또한 sequential peeling 호출 시 이완 신호에 음수 부호 오류가 있었음:
+```python
+# 수정 전 (잘못됨 — V_relax[0] == V_relax0 이므로 항이 상쇄됨)
+_sequential_peel_p0(t_relax, -V_relax + V_relax0 + (V_relax[0] - V_relax0), 0.0, -I_set, ...)
+# 수정 후
+_sequential_peel_p0(t_relax, V_relax0 - V_relax, 0.0, I_set, ...)
+```
+
+**수정 내용** (`models.py` — `_fit_relaxation`):
+- CC 구간: `voltage_response_2rc` → `voltage_response_2rc_warburg` (σ_W를 5번째 자유 파라미터로 추가)
+- 이완 구간: `voltage_response_relaxation` 유지 (순수 RC — τ1/τ2를 깨끗하게 분리)
+- Sequential peeling 입력 부호 수정: `V_relax0 - V_relax`, `I_set` 양수로 통일
+- `FitResult.sigma_W` 에 피팅된 σ_W 저장
+
+**수정 내용** (`app.py`):
+- `V_pred` 계산 분기에 `"relaxation"` 추가 → `voltage_response_2rc_warburg` 사용
+  (기존: `else` 브랜치의 `voltage_response_2rc`로 잘못 계산되어 그래프 불일치)
+
+**수정 후 기대 효과**:
+- σ_W가 √t 확산 드리프트를 흡수 → R2, C2가 실제 RC 아크 값으로 수렴
+- R1+R2 ≈ EIS Rct (Warburg/Joint 모델과 동등한 수준)
+- C2가 물리적으로 타당한 범위(수십~수백 F)로 감소
+
+**주의**: Relaxation 모델도 이제 Warburg 계수를 가지므로, `views.py`의 σ_W 행 표시 로직(`getattr(result, "sigma_W", 0.0) > 0.0` 조건)이 자동으로 적용됨.
+
 - **lmfit 경로**: `use_lmfit=True` 분기 코드가 `models.py`에 진입점 존재하나, 내부 피팅 함수들이 아직 lmfit API 미구현. scipy로 fallback 가능성 있음 — 확인 필요.
 
 - **4695 셀 프리셋**: `CELL_PRESETS`에 정의되어 있으나 실제 셀 데이터로 검증 미완료
