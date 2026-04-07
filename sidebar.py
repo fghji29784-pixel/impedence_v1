@@ -110,6 +110,7 @@ def render_model_selector() -> str:
         "등가회로 모델",
         options=[
             "Extended Randles  (Rs + R1C1 + R2C2)  ← 표준",
+            "3RC  (Rs + R1C1 + R2C2 + R3C3)",
             "Warburg  (Rs + R1C1 + R2C2 + √t)",
             "Joint Warburg  (Rs 자유 파라미터, ramp+CC 동시)",
             "Relaxation  (CC + 이완 구간 동시 피팅)  ← 권장",
@@ -119,6 +120,8 @@ def render_model_selector() -> str:
         help=(
             "**Extended Randles**: Rs + R1‖C1 + R2‖C2.\n"
             "Rs는 ΔV/ΔI(p0→p1)로 고정. 기본 모델.\n\n"
+            "**3RC**: Extended에 R3‖C3 추가. EIS에서 3개 반원이 뚜렷할 때 사용.\n"
+            "τ3 ≪ 피팅 창이어야 R3/C3를 분리할 수 있음.\n\n"
             "**Warburg**: Extended + Warburg σ_W·√t 항.\n"
             "확산 전압을 σ_W로 분리해 R2 과대추정 완화.\n\n"
             "**Joint Warburg**: Rs도 자유 파라미터로 ramp+CC 전 구간 동시 피팅.\n"
@@ -134,6 +137,8 @@ def render_model_selector() -> str:
         return "relaxation"
     if "Joint" in choice:
         return "joint_warburg"
+    if "3RC" in choice:
+        return "3rc"
     if "Warburg" in choice:
         return "warburg"
     return "simple" if "Simple" in choice else "extended"

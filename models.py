@@ -39,16 +39,24 @@ class FitResult:
     rmse_mv: float          # RMSE in millivolts
     converged: bool = True  # False if curve_fit failed to converge
     sigma_W: float = 0.0    # Warburg coefficient [Ω·s^(-1/2)]; 0 for non-Warburg models
+    R3: float = 0.0         # 3RC third arc resistance [Ω]; 0.0 for 2RC models
+    C3: float = 0.0         # 3RC third arc capacitance [F]; 0.0 for 2RC models
+    sigma_R3: float = field(default=float("nan"))
+    sigma_C3: float = field(default=float("nan"))
     tau1: float = field(init=False)
     tau2: float = field(init=False)
+    tau3: float = field(init=False)
     f1: float = field(init=False)
     f2: float = field(init=False)
+    f3: float = field(init=False)
 
     def __post_init__(self):
         self.tau1 = self.R1 * self.C1
         self.tau2 = self.R2 * self.C2
+        self.tau3 = self.R3 * self.C3
         self.f1 = 1.0 / (2.0 * math.pi * self.tau1) if self.tau1 > 0 else float("nan")
         self.f2 = 1.0 / (2.0 * math.pi * self.tau2) if self.tau2 > 0 else float("nan")
+        self.f3 = 1.0 / (2.0 * math.pi * self.tau3) if self.tau3 > 0 else float("nan")
 
 
 # ──────────────────────────────────────────────
@@ -69,6 +77,9 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.025, 0.8],
         "lb_1rc": [1e-6,  0.01],
         "ub_1rc": [0.5,   100.0],
+        "p0_3rc": [0.025, 0.8,  0.020, 80.0,  0.010, 500.0],
+        "lb_3rc": [1e-6,  0.01, 1e-6,  1.0,   1e-6,  1e-3],
+        "ub_3rc": [0.5,   100.0, 0.5,  1000.0, 0.5,  5000.0],
         "fit_window_s": 5.0,
     },
     "21700_5Ah": {
@@ -80,6 +91,9 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.005, 2.0],
         "lb_1rc": [1e-6,  1e-3],
         "ub_1rc": [1.0,   500.0],
+        "p0_3rc": [0.001, 5.0,  0.003, 0.5,   0.002, 500.0],
+        "lb_3rc": [1e-6,  1e-3, 1e-6,  1e-3,  1e-6,  1e-3],
+        "ub_3rc": [1.0,   500.0, 1.0,  2000.0, 1.0,  5000.0],
         "fit_window_s": 5.0,
     },
     "4680_27Ah": {
@@ -91,6 +105,9 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.003, 20.0],
         "lb_1rc": [1e-6,  0.5],
         "ub_1rc": [0.1,   500.0],
+        "p0_3rc": [0.001, 20.0, 0.003, 800.0, 0.002, 2000.0],
+        "lb_3rc": [1e-6,  0.5,  1e-6,  50.0,  1e-6,  1e-3],
+        "ub_3rc": [0.1,   500.0, 0.1,  5000.0, 0.1,  10000.0],
         "fit_window_s": 15.0,
     },
     "4695_32Ah": {
@@ -102,6 +119,9 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.002, 25.0],
         "lb_1rc": [1e-6,  0.5],
         "ub_1rc": [0.1,   500.0],
+        "p0_3rc": [0.001, 25.0, 0.002, 1000.0, 0.002, 3000.0],
+        "lb_3rc": [1e-6,  0.5,  1e-6,  50.0,   1e-6,  1e-3],
+        "ub_3rc": [0.1,   500.0, 0.1,  8000.0,  0.1,  15000.0],
         "fit_window_s": 20.0,
     },
     "custom": {
@@ -113,6 +133,9 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.005, 2.0],
         "lb_1rc": [1e-6,  1e-3],
         "ub_1rc": [1.0,   500.0],
+        "p0_3rc": [0.005, 2.0,  0.010, 150.0, 0.005, 500.0],
+        "lb_3rc": [1e-6,  1e-3, 1e-6,  1e-3,  1e-6,  1e-3],
+        "ub_3rc": [1.0,   500.0, 1.0,  2000.0, 1.0,  5000.0],
         "fit_window_s": 5.0,
     },
 }
@@ -224,6 +247,37 @@ def voltage_response_relaxation(
     e1 = np.exp(-t / tau1) if tau1 > 0.0 else np.zeros_like(t)
     e2 = np.exp(-t / tau2) if tau2 > 0.0 else np.zeros_like(t)
     return V_relax0 - R1 * I_pre * (1.0 - e1) - R2 * I_pre * (1.0 - e2)
+
+
+def voltage_response_3rc(
+    t: np.ndarray,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    R3: float,
+    C3: float,
+    Vp2: float,
+    I: float,
+) -> np.ndarray:
+    """Extended Randles 3-RC time-domain response.
+
+    V(t) = Vp2 + R1*I*(1-exp(-t/τ1)) + R2*I*(1-exp(-t/τ2)) + R3*I*(1-exp(-t/τ3))
+
+    Adds a third RC arc (R3||C3) to capture an additional physical process
+    (e.g., solid-state diffusion arc or grain-boundary resistance) that EIS
+    shows as a third distinguishable semicircle.  Requires a long enough fit
+    window (≥ 3×τ3) to resolve τ3 reliably.
+    """
+    tau1 = R1 * C1
+    tau2 = R2 * C2
+    tau3 = R3 * C3
+    return (
+        Vp2
+        + R1 * I * (1.0 - np.exp(-t / tau1))
+        + R2 * I * (1.0 - np.exp(-t / tau2))
+        + R3 * I * (1.0 - np.exp(-t / tau3))
+    )
 
 
 def _zoh_step(x_prev: float, dt: float, R: float, tau: float, I_prev: float) -> float:
@@ -370,6 +424,27 @@ def impedance_2rc(
     return Rs + Z1 + Z2
 
 
+def impedance_3rc(
+    f: np.ndarray,
+    Rs: float,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    R3: float,
+    C3: float,
+) -> np.ndarray:
+    """Complex impedance Z(f) for 3-RC Randles circuit.
+
+    Z(f) = Rs + R1/(1+jωτ1) + R2/(1+jωτ2) + R3/(1+jωτ3)
+    """
+    omega = 2.0 * math.pi * np.asarray(f, dtype=float)
+    Z1 = R1 / (1.0 + 1j * omega * R1 * C1)
+    Z2 = R2 / (1.0 + 1j * omega * R2 * C2)
+    Z3 = R3 / (1.0 + 1j * omega * R3 * C3)
+    return Rs + Z1 + Z2 + Z3
+
+
 # ──────────────────────────────────────────────
 # Parameter fitting
 # ──────────────────────────────────────────────
@@ -417,6 +492,9 @@ def fit_parameters(
 
     if model == "simple":
         return _fit_1rc(t_fit, V_fit, Rs, I, Vp2, cell_preset)
+
+    if model == "3rc":
+        return _fit_3rc(t_fit, V_fit, Rs, I, Vp2, use_lmfit, cell_preset)
 
     if model == "warburg":
         return _fit_2rc_warburg(t_fit, V_fit, Rs, I, Vp2, use_lmfit, cell_preset)
@@ -596,6 +674,108 @@ def _fit_2rc(
         rmse_mv=_rmse_mv(V_fit, V_pred),
         converged=converged,
     )
+
+
+def _fit_3rc(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Rs: float,
+    I: float,
+    Vp2: float,
+    use_lmfit: bool,
+    cell_preset: dict,
+) -> FitResult:
+    """Fit 3-RC equivalent circuit model.
+
+    Adds a third RC arc (R3||C3) for cells that exhibit a distinct third
+    semicircle in EIS (e.g., solid-state diffusion arc, grain boundary).
+
+    Parameter order: [R1, C1, R2, C2, R3, C3]
+
+    Note: τ3 must be < fit window for R3/C3 to be resolvable.  If τ3 >> window,
+    R3 will absorb the slow drift (similar to the 2RC R2-inflation problem).
+    Use in combination with a long fit window or Relaxation model for best results.
+    """
+    lb = cell_preset.get("lb_3rc", [1e-6, 1e-3, 1e-6, 1e-3, 1e-6, 1e-3])
+    ub = cell_preset.get("ub_3rc", [1.0, 500.0, 1.0, 2000.0, 1.0, 5000.0])
+    p0_preset = cell_preset.get("p0_3rc", [0.005, 2.0, 0.010, 150.0, 0.005, 500.0])
+
+    # Use 2RC sequential peel to initialise R1/C1/R2/C2; estimate R3/C3 from residual
+    lb_2rc = lb[:4]
+    ub_2rc = ub[:4]
+    p0_peel = _sequential_peel_p0(t_fit, V_fit, Vp2, I, lb_2rc, ub_2rc)
+    if p0_peel is not None:
+        R1e, C1e, R2e, C2e = p0_peel
+        # Estimate R3/C3 from the residual after subtracting the 2RC prediction
+        V_2rc = voltage_response_2rc(t_fit, R1e, C1e, R2e, C2e, Vp2, I)
+        resid = V_fit - V_2rc
+        V_res_max = float(np.max(resid)) if np.max(resid) > 0 else 1e-6
+        R3e = float(np.clip(V_res_max / max(abs(I), 1e-9),
+                            lb[4] + 1e-12, ub[4] - 1e-12))
+        T_win = float(t_fit[-1]) if t_fit[-1] > 0 else 1.0
+        tau3e = float(np.clip(T_win * 0.5, 0.01, T_win * 5.0))
+        C3e = float(np.clip(tau3e / max(R3e, 1e-9), lb[5] + 1e-12, ub[5] - 1e-12))
+        p0 = [R1e, C1e, R2e, C2e, R3e, C3e]
+    else:
+        p0 = p0_preset
+
+    def model_fixed(t, R1, C1, R2, C2, R3, C3):
+        return voltage_response_3rc(t, R1, C1, R2, C2, R3, C3, Vp2, I)
+
+    if use_lmfit:
+        try:
+            import lmfit
+        except ImportError:
+            use_lmfit = False
+
+    converged = True
+    R1, C1, R2, C2, R3, C3 = p0
+    sigma = [float("nan")] * 6
+
+    if use_lmfit:
+        import lmfit
+        params = lmfit.Parameters()
+        for name, p0v, lbv, ubv in zip(["R1", "C1", "R2", "C2", "R3", "C3"], p0, lb, ub):
+            params.add(name, value=p0v, min=lbv, max=ubv)
+
+        def residual(p):
+            return model_fixed(t_fit, p["R1"], p["C1"], p["R2"], p["C2"],
+                               p["R3"], p["C3"]) - V_fit
+
+        lm = lmfit.minimize(residual, params, method="least_squares")
+        p = lm.params
+        R1, C1, R2, C2, R3, C3 = (p["R1"].value, p["C1"].value,
+                                    p["R2"].value, p["C2"].value,
+                                    p["R3"].value, p["C3"].value)
+
+        def _s(par):
+            return par.stderr if par.stderr is not None else float("nan")
+        sigma = [_s(p["R1"]), _s(p["C1"]), _s(p["R2"]), _s(p["C2"]),
+                 _s(p["R3"]), _s(p["C3"])]
+        converged = lm.success
+    else:
+        try:
+            popt, pcov = curve_fit(
+                model_fixed, t_fit, V_fit,
+                p0=p0, bounds=(lb, ub),
+                method="trf", maxfev=20000,
+            )
+            R1, C1, R2, C2, R3, C3 = popt
+            sigma = np.sqrt(np.diag(pcov)).tolist()
+        except (RuntimeError, ValueError):
+            converged = False
+
+    V_pred = model_fixed(t_fit, R1, C1, R2, C2, R3, C3)
+    result = FitResult(
+        Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[0], sigma_C1=sigma[1],
+        sigma_R2=sigma[2], sigma_C2=sigma[3],
+        R3=R3, C3=C3, sigma_R3=sigma[4], sigma_C3=sigma[5],
+        r2=_r2(V_fit, V_pred),
+        rmse_mv=_rmse_mv(V_fit, V_pred),
+        converged=converged,
+    )
+    return result
 
 
 def _fit_2rc_warburg(
@@ -997,13 +1177,14 @@ def compute_nyquist(
     f_range: tuple[float, float] | None = None,
     n_points: int = 500,
     sigma_W: float = 0.0,
+    R3: float = 0.0,
+    C3: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute Nyquist plot arrays from fitted parameters.
 
-    f_range is auto-derived from the fitted time constants τ1, τ2 when not
-    specified. This ensures the full semicircle is always visible, even for
-    large cells with very slow τ2 (e.g., τ2 = 30 s → f2 ≈ 0.005 Hz, which
-    was outside the old hardcoded lower bound of 0.01 Hz).
+    f_range is auto-derived from the fitted time constants τ1, τ2 (and τ3
+    for 3RC) when not specified.  This ensures the full semicircle is always
+    visible, even for large cells with very slow τ2.
 
     Returns
     -------
@@ -1013,8 +1194,10 @@ def compute_nyquist(
     if f_range is None:
         tau1 = R1 * C1
         tau2 = R2 * C2
-        tau_max = max(tau1, tau2, 1e-6)
-        tau_min = min(tau1, tau2, 1e-6)
+        tau3 = R3 * C3 if R3 > 0 and C3 > 0 else 0.0
+        taus = [t for t in (tau1, tau2, tau3) if t > 0]
+        tau_max = max(taus + [1e-6])
+        tau_min = min(taus + [1e-6])
         f_lo = 0.05 / (2.0 * math.pi * tau_max)
         f_hi = 20.0 / (2.0 * math.pi * tau_min)
         f_range = (max(f_lo, 1e-4), min(f_hi, 1e6))
@@ -1022,7 +1205,9 @@ def compute_nyquist(
     f_array = np.logspace(
         math.log10(f_range[0]), math.log10(f_range[1]), n_points
     )
-    if sigma_W > 0.0:
+    if R3 > 0.0 and C3 > 0.0:
+        Z = impedance_3rc(f_array, Rs, R1, C1, R2, C2, R3, C3)
+    elif sigma_W > 0.0:
         Z = impedance_2rc_warburg(f_array, Rs, R1, C1, R2, C2, sigma_W)
     else:
         Z = impedance_2rc(f_array, Rs, R1, C1, R2, C2)

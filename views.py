@@ -17,6 +17,7 @@ Changes from DCIM_claude:
 
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -317,6 +318,29 @@ def render_tab_fit() -> None:
                 f"{result.sigma_C2:.4f} F",
                 "—", "—", "—", "—", "—", "—",
             ]
+            # 3RC 모델인 경우 R3, C3, τ3, f3 행 추가
+            if getattr(result, "R3", 0.0) > 0.0:
+                insert_pos = _params.index("τ₁")
+                for name, val, err in [
+                    ("R₃", f"{result.R3 * 1000:.4f} mΩ",
+                     f"{getattr(result, 'sigma_R3', float('nan')) * 1000:.4f} mΩ"
+                     if not math.isnan(getattr(result, 'sigma_R3', float('nan'))) else "—"),
+                    ("C₃", f"{result.C3:.4f} F",
+                     f"{getattr(result, 'sigma_C3', float('nan')):.4f} F"
+                     if not math.isnan(getattr(result, 'sigma_C3', float('nan'))) else "—"),
+                ]:
+                    _params.insert(insert_pos, name)
+                    _vals.insert(insert_pos, val)
+                    _errs.insert(insert_pos, err)
+                    insert_pos += 1
+                # τ3, f3 before R²
+                _params.insert(-2, "τ₃")
+                _vals.insert(-2, f"{result.tau3:.4f} s")
+                _errs.insert(-2, "—")
+                _params.insert(-2, "f₃")
+                _vals.insert(-2, f"{result.f3:.5f} Hz")
+                _errs.insert(-2, "—")
+
             # Warburg 모델인 경우 σ_W 행 추가
             if getattr(result, "sigma_W", 0.0) > 0.0:
                 _params.insert(-2, "σ_W (Warburg)")

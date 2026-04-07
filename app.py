@@ -27,6 +27,7 @@ from preprocessor import (
 from models import (
     fit_parameters, compute_nyquist,
     voltage_response_2rc, voltage_response_2rc_warburg, voltage_response_1rc,
+    voltage_response_3rc,
 )
 from sidebar import (
     render_cell_selector,
@@ -374,6 +375,11 @@ if run_button:
                     t_fit, result.R1, result.C1, result.R2, result.C2,
                     result.sigma_W, Vp2, I_set,
                 )
+            elif model_choice == "3rc":
+                V_pred = voltage_response_3rc(
+                    t_fit, result.R1, result.C1, result.R2, result.C2,
+                    result.R3, result.C3, Vp2, I_set,
+                )
             else:
                 V_pred = voltage_response_2rc(
                     t_fit, result.R1, result.C1, result.R2, result.C2, Vp2, I_set
@@ -383,6 +389,7 @@ if run_button:
             re_z, neg_im_z = compute_nyquist(
                 result.Rs, result.R1, result.C1, result.R2, result.C2,
                 sigma_W=result.sigma_W,
+                R3=result.R3, C3=result.C3,
             )
             st.session_state.re_z     = re_z
             st.session_state.neg_im_z = neg_im_z
