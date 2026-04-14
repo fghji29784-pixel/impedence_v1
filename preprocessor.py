@@ -165,31 +165,38 @@ def prepare_fit_data(
     time_all = df["time_s"].values
     volt_all = df["voltage_V"].values
 
-    # ── Auto-detect dt (global median) ───────────────────────────────────
-    # Global median is correct when the DCIM burst dominates the recording.
-    # Using local dt around p2 caused too-small n_samples when p2 sits at
-    # the transition between fast burst and slow CC data.
+    # ── Auto-detect dt (global median) — kept for return value only ──────
     if dt is None:
         diffs = np.diff(time_all)
         positive_diffs = diffs[diffs > 0]
-        if len(positive_diffs) > 0:
-            dt = float(np.median(positive_diffs))
-        else:
-            dt = 1.0
+        dt = float(np.median(positive_diffs)) if len(positive_diffs) > 0 else 1.0
         if dt <= 0:
-            raise ValueError(
-                f"Auto-detected dt = {dt:.6g} s is non-positive. "
-                "Check that the time column is in seconds and monotonically increasing."
-            )
-
-    # ── Window size: count-based (robust to time resets) ─────────────────
-    # searchsorted on a non-monotonic time array (BioLogic sequence resets)
-    # returns unpredictable positions.  Using a fixed sample count avoids
-    # this entirely.
-    n_samples = max(2, int(round(window_s / dt)))
+            dt = 1.0
 
     # ── Row-position of p2 ────────────────────────────────────────────────
     pos_p2 = df.index.get_loc(idx_p2)
+
+    # ── Window size: time-based (handles mixed-rate & avoids over-capture) ─
+    # Sample-count approach (n = window_s / dt) fails when the global median
+    # dt comes from a fast DCIM burst: a 5 s window at dt=1 ms → 5000 samples
+    # that may actually span 40+ seconds, capturing the relaxation phase and
+    # causing the RC model to fail (voltage goes up then down → R1,R2 → 0).
+    #
+    # Instead: walk forward in real time and stop at window_s seconds.
+    # BioLogic files can reset time at sequence boundaries; we stop at the
+    # first backward jump so we never cross a reset.
+    remaining_t = time_all[pos_p2:]
+    t_p2_val = float(remaining_t[0])
+
+    # Find first time-reset (backwards jump) after p2
+    diffs_remaining = np.diff(remaining_t)
+    resets = np.where(diffs_remaining < 0)[0]
+    monotonic_len = int(resets[0]) + 1 if len(resets) > 0 else len(remaining_t)
+
+    # searchsorted is safe on the guaranteed-monotonic slice
+    t_mono = remaining_t[:monotonic_len] - t_p2_val
+    n_in_window = int(np.searchsorted(t_mono, window_s, side="right"))
+    n_samples = max(2, n_in_window)
     pos_end = min(pos_p2 + n_samples, len(df))
 
     if pos_end <= pos_p2:
@@ -273,8 +280,14 @@ def prepare_joint_fit_data(
     t_ramp = t_ramp_abs - t_ramp_abs[0]
     V0 = float(V_ramp[0])
 
-    # ── CC transient: p2 → p2 + window_s ────────────────────────────────
-    n_cc = max(2, int(round(window_s / dt)))
+    # ── CC transient: p2 → p2 + window_s (time-based) ───────────────────
+    remaining_t_cc = time_all[pos_p2:]
+    t_p2_val_cc = float(remaining_t_cc[0])
+    diffs_cc_r = np.diff(remaining_t_cc)
+    resets_cc = np.where(diffs_cc_r < 0)[0]
+    mono_len_cc = int(resets_cc[0]) + 1 if len(resets_cc) > 0 else len(remaining_t_cc)
+    t_mono_cc = remaining_t_cc[:mono_len_cc] - t_p2_val_cc
+    n_cc = max(2, int(np.searchsorted(t_mono_cc, window_s, side="right")))
     pos_cc_end = min(pos_p2 + n_cc, len(df))
     t_cc_abs = time_all[pos_p2 : pos_cc_end]
     V_cc_raw = volt_all[pos_p2 : pos_cc_end]
@@ -392,13 +405,22 @@ def prepare_relaxation_data(
     time_all = df["time_s"].values
     volt_all = df["voltage_V"].values
 
+    pos_r0 = df.index.get_loc(idx_relax_start)
+
+    # Time-based window (same approach as prepare_fit_data)
+    remaining_t_r = time_all[pos_r0:]
+    t_r0_val = float(remaining_t_r[0])
+    diffs_r_r = np.diff(remaining_t_r)
+    resets_r = np.where(diffs_r_r < 0)[0]
+    mono_len_r = int(resets_r[0]) + 1 if len(resets_r) > 0 else len(remaining_t_r)
+    t_mono_r = remaining_t_r[:mono_len_r] - t_r0_val
+    n_relax = max(2, int(np.searchsorted(t_mono_r, window_s, side="right")))
+    pos_end = min(pos_r0 + n_relax, len(df))
+
+    # dt still needed for return (use local estimate near relaxation start)
     diffs = np.diff(time_all)
     pos_diffs = diffs[diffs > 0]
     dt = float(np.median(pos_diffs)) if len(pos_diffs) > 0 else 1.0
-
-    pos_r0 = df.index.get_loc(idx_relax_start)
-    n_relax = max(2, int(round(window_s / dt)))
-    pos_end = min(pos_r0 + n_relax, len(df))
 
     t_abs   = time_all[pos_r0 : pos_end]
     V_raw   = volt_all[pos_r0 : pos_end]

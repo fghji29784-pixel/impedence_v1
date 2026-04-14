@@ -72,7 +72,11 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0D1B2A 0%, #1C3A5E 100%);
 }
-[data-testid="stSidebar"] * { color: #E0EAF5 !important; }
+/* 텍스트/마크다운은 밝은 색으로 */
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] .stMarkdown { color: #E0EAF5; }
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     color: #64C8E8 !important;
@@ -80,13 +84,18 @@ html, body, [data-testid="stAppViewContainer"] {
     padding-bottom: 0.3rem;
     margin-top: 1rem;
 }
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stFileUploader label,
-[data-testid="stSidebar"] .stNumberInput label,
-[data-testid="stSidebar"] .stCheckbox label {
-    color: #A8C8E0 !important;
+[data-testid="stSidebar"] label {
+    color: #B8D4EA !important;
     font-size: 0.82rem;
 }
+/* 위젯 입력 영역은 흰 배경 + 어두운 글씨로 (선택값이 안 보이는 문제 해결) */
+[data-testid="stSidebar"] [data-baseweb="select"] { color: #1A1A1A !important; }
+[data-testid="stSidebar"] [data-baseweb="select"] * { color: #1A1A1A !important; }
+[data-testid="stSidebar"] input[type="number"],
+[data-testid="stSidebar"] input[type="text"] { color: #1A1A1A !important; background: white !important; }
+/* 라디오/체크박스 선택 상태 강조 */
+[data-testid="stSidebar"] [data-testid="stRadio"] label { color: #E0EAF5 !important; }
+[data-testid="stSidebar"] [data-testid="stCheckbox"] label { color: #E0EAF5 !important; }
 
 /* ─── 스텝 뱃지 ─── */
 .step-badge {
@@ -275,91 +284,99 @@ if run_button:
     st.session_state.cell_key = cell_key
 
     try:
-        with st.spinner("충전 데이터 로딩 중…"):
-            charge_file.seek(0)
-            df = load_charge_data(charge_file, current_unit=current_unit)
-            st.session_state.df_charge = df
+        _prog = st.progress(0, text="분석 시작 중…")
 
+        # ── Step 1: 충전 데이터 로딩 ─────────────────────────────────────
+        _prog.progress(5, text="① 충전 데이터 로딩 중…")
+        charge_file.seek(0)
+        df = load_charge_data(charge_file, current_unit=current_unit)
+        st.session_state.df_charge = df
+
+        # ── Step 2: EIS 데이터 로딩 (선택) ──────────────────────────────
         if eis_file is not None:
-            with st.spinner("EIS 데이터 로딩 중…"):
-                eis_file.seek(0)
-                df_eis = load_eis_data(eis_file)
-                st.session_state.df_eis = df_eis
+            _prog.progress(15, text="② EIS 데이터 로딩 중…")
+            eis_file.seek(0)
+            df_eis = load_eis_data(eis_file)
+            st.session_state.df_eis = df_eis
 
-        with st.spinner("p0 / p1 / p2 탐지 중…"):
-            I_set = detect_I_set(df)
-            idx_p0, idx_p1, idx_p2 = find_p0_p1_p2(df, I_set)
-            if p2_override is not None:
-                idx_p2 = df.index[p2_override]
-            st.session_state.I_set  = I_set
-            st.session_state.idx_p0 = idx_p0
-            st.session_state.idx_p1 = idx_p1
-            st.session_state.idx_p2 = idx_p2
+        # ── Step 3: p0 / p1 / p2 탐지 ───────────────────────────────────
+        _prog.progress(25, text="③ p0 / p1 / p2 탐지 중…")
+        I_set = detect_I_set(df)
+        idx_p0, idx_p1, idx_p2 = find_p0_p1_p2(df, I_set)
+        if p2_override is not None:
+            idx_p2 = df.index[p2_override]
+        st.session_state.I_set  = I_set
+        st.session_state.idx_p0 = idx_p0
+        st.session_state.idx_p1 = idx_p1
+        st.session_state.idx_p2 = idx_p2
 
-        with st.spinner("Rs 계산 중 (ΔV/ΔI)…"):
-            Rs = calculate_Rs(df, idx_p0, idx_p1)
-            st.session_state.Rs           = Rs
-            st.session_state.Rs_dcim_2wire = Rs   # always store 2-wire estimate
+        # ── Step 4: Rs 계산 ──────────────────────────────────────────────
+        _prog.progress(40, text="④ Rs 계산 중 (ΔV/ΔI)…")
+        Rs = calculate_Rs(df, idx_p0, idx_p1)
+        st.session_state.Rs           = Rs
+        st.session_state.Rs_dcim_2wire = Rs
 
-        with st.spinner("피팅 데이터 준비 중…"):
-            t_fit, V_fit, Vp2, dt = prepare_fit_data(df, idx_p2, window_s=window_s)
-            st.session_state.t_fit = t_fit
-            st.session_state.V_fit = V_fit
-            st.session_state.Vp2   = Vp2
-            st.session_state.dt    = dt
+        # ── Step 5: 피팅 데이터 준비 ─────────────────────────────────────
+        _prog.progress(52, text="⑤ 피팅 데이터 준비 중…")
+        t_fit, V_fit, Vp2, dt = prepare_fit_data(df, idx_p2, window_s=window_s)
+        st.session_state.t_fit = t_fit
+        st.session_state.V_fit = V_fit
+        st.session_state.Vp2   = Vp2
+        st.session_state.dt    = dt
 
-            if model_choice == "joint_warburg":
-                t_ramp, I_ramp, V_ramp, _, _, V0, _ = prepare_joint_fit_data(
-                    df, idx_p0, idx_p2, window_s=window_s,
-                )
-                st.session_state.t_ramp = t_ramp
-                st.session_state.I_ramp = I_ramp
-                st.session_state.V_ramp = V_ramp
-            else:
-                V0 = None
-
-            if model_choice == "relaxation":
-                idx_relax = find_relaxation_start(df, I_set, search_after_idx=idx_p2)
-                if idx_relax is not None:
-                    t_relax, V_relax, V_relax0 = prepare_relaxation_data(
-                        df, idx_relax, window_s=relax_window_s,
-                    )
-                    st.session_state.t_relax       = t_relax
-                    st.session_state.V_relax        = V_relax
-                    st.session_state.V_relax0       = V_relax0
-                    st.session_state.idx_relax_start = idx_relax
-                else:
-                    st.warning(
-                        "⚠️ **이완 구간을 찾을 수 없습니다.** 데이터에 전류 차단 구간이 없습니다.\n"
-                        "Relaxation 모델 대신 Extended Randles로 피팅합니다."
-                    )
-                    model_choice = "extended"
-
-        with st.spinner("등가회로 파라미터 피팅 중…"):
-            _t_relax = st.session_state.get("t_relax") if model_choice == "relaxation" else None
-            _V_relax = st.session_state.get("V_relax") if model_choice == "relaxation" else None
-            _V_relax0 = st.session_state.get("V_relax0") if model_choice == "relaxation" else None
-            result = fit_parameters(
-                t_fit, V_fit,
-                Rs=Rs,
-                I=I_set,
-                Vp2=Vp2,
-                model=model_choice,
-                use_lmfit=use_lmfit,
-                cell_preset=cell_preset,
-                t_ramp=st.session_state.get("t_ramp") if model_choice == "joint_warburg" else None,
-                I_ramp=st.session_state.get("I_ramp") if model_choice == "joint_warburg" else None,
-                V_ramp=st.session_state.get("V_ramp") if model_choice == "joint_warburg" else None,
-                V0=V0,
-                t_relax=_t_relax,
-                V_relax=_V_relax,
-                V_relax0=_V_relax0,
+        if model_choice == "joint_warburg":
+            t_ramp, I_ramp, V_ramp, _, _, V0, _ = prepare_joint_fit_data(
+                df, idx_p0, idx_p2, window_s=window_s,
             )
-            if model_choice == "joint_warburg":
-                st.session_state.Rs = result.Rs
-            st.session_state.fit_result = result
-            st.session_state.nominal_cap_ah = cell_preset.get("nominal_capacity_ah")
-            st.session_state.model_choice = model_choice
+            st.session_state.t_ramp = t_ramp
+            st.session_state.I_ramp = I_ramp
+            st.session_state.V_ramp = V_ramp
+        else:
+            V0 = None
+
+        if model_choice == "relaxation":
+            idx_relax = find_relaxation_start(df, I_set, search_after_idx=idx_p2)
+            if idx_relax is not None:
+                t_relax, V_relax, V_relax0 = prepare_relaxation_data(
+                    df, idx_relax, window_s=relax_window_s,
+                )
+                st.session_state.t_relax       = t_relax
+                st.session_state.V_relax        = V_relax
+                st.session_state.V_relax0       = V_relax0
+                st.session_state.idx_relax_start = idx_relax
+            else:
+                st.warning(
+                    "⚠️ **이완 구간을 찾을 수 없습니다.** 데이터에 전류 차단 구간이 없습니다.\n"
+                    "Relaxation 모델 대신 Extended Randles로 피팅합니다."
+                )
+                model_choice = "extended"
+
+        # ── Step 6: 등가회로 파라미터 피팅 ──────────────────────────────
+        _prog.progress(63, text="⑥ 등가회로 파라미터 피팅 중… (가장 오래 걸립니다)")
+        _t_relax = st.session_state.get("t_relax") if model_choice == "relaxation" else None
+        _V_relax = st.session_state.get("V_relax") if model_choice == "relaxation" else None
+        _V_relax0 = st.session_state.get("V_relax0") if model_choice == "relaxation" else None
+        result = fit_parameters(
+            t_fit, V_fit,
+            Rs=Rs,
+            I=I_set,
+            Vp2=Vp2,
+            model=model_choice,
+            use_lmfit=use_lmfit,
+            cell_preset=cell_preset,
+            t_ramp=st.session_state.get("t_ramp") if model_choice == "joint_warburg" else None,
+            I_ramp=st.session_state.get("I_ramp") if model_choice == "joint_warburg" else None,
+            V_ramp=st.session_state.get("V_ramp") if model_choice == "joint_warburg" else None,
+            V0=V0,
+            t_relax=_t_relax,
+            V_relax=_V_relax,
+            V_relax0=_V_relax0,
+        )
+        if model_choice == "joint_warburg":
+            st.session_state.Rs = result.Rs
+        st.session_state.fit_result = result
+        st.session_state.nominal_cap_ah = cell_preset.get("nominal_capacity_ah")
+        st.session_state.model_choice = model_choice
 
         if not result.converged:
             st.warning(
@@ -367,33 +384,35 @@ if run_button:
                 "**개선 방법:** 셀 타입 확인 → 피팅 창 조정 → lmfit 엔진 전환 → p2 수동 지정"
             )
 
-        with st.spinner("나이퀴스트 곡선 계산 중…"):
-            if model_choice == "simple":
-                V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
-            elif model_choice in ("warburg", "joint_warburg", "relaxation"):
-                V_pred = voltage_response_2rc_warburg(
-                    t_fit, result.R1, result.C1, result.R2, result.C2,
-                    result.sigma_W, Vp2, I_set,
-                )
-            elif model_choice == "3rc":
-                V_pred = voltage_response_3rc(
-                    t_fit, result.R1, result.C1, result.R2, result.C2,
-                    result.R3, result.C3, Vp2, I_set,
-                )
-            else:
-                V_pred = voltage_response_2rc(
-                    t_fit, result.R1, result.C1, result.R2, result.C2, Vp2, I_set
-                )
-            st.session_state.V_pred = V_pred
-
-            re_z, neg_im_z = compute_nyquist(
-                result.Rs, result.R1, result.C1, result.R2, result.C2,
-                sigma_W=result.sigma_W,
-                R3=result.R3, C3=result.C3,
+        # ── Step 7: 나이퀴스트 곡선 계산 ─────────────────────────────────
+        _prog.progress(88, text="⑦ 나이퀴스트 곡선 계산 중…")
+        if model_choice == "simple":
+            V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
+        elif model_choice in ("warburg", "joint_warburg", "relaxation"):
+            V_pred = voltage_response_2rc_warburg(
+                t_fit, result.R1, result.C1, result.R2, result.C2,
+                result.sigma_W, Vp2, I_set,
             )
-            st.session_state.re_z     = re_z
-            st.session_state.neg_im_z = neg_im_z
+        elif model_choice == "3rc":
+            V_pred = voltage_response_3rc(
+                t_fit, result.R1, result.C1, result.R2, result.C2,
+                result.R3, result.C3, Vp2, I_set,
+            )
+        else:
+            V_pred = voltage_response_2rc(
+                t_fit, result.R1, result.C1, result.R2, result.C2, Vp2, I_set
+            )
+        st.session_state.V_pred = V_pred
 
+        re_z, neg_im_z = compute_nyquist(
+            result.Rs, result.R1, result.C1, result.R2, result.C2,
+            sigma_W=result.sigma_W,
+            R3=result.R3, C3=result.C3,
+        )
+        st.session_state.re_z     = re_z
+        st.session_state.neg_im_z = neg_im_z
+
+        _prog.progress(100, text="✅ 분석 완료!")
         st.success("✅ 분석 완료!")
 
     except Exception as exc:
