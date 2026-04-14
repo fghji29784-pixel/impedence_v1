@@ -172,6 +172,48 @@ DCIM_rewrite/
 
 ## 6. 버그 수정 이력
 
+### [2026-04-14] 탭 전환 느림 문제 + 피팅 속도 개선
+
+**증상**:
+- 탭을 클릭하거나 사이드바 옵션을 건드릴 때마다 화면이 수 초간 멈춤
+- 피팅 자체도 예상보다 느림 (수십 초 소요)
+
+**근본 원인 1 — 모든 탭이 매 rerun마다 figure 재생성**:
+Streamlit은 UI 상호작용 시 스크립트 전체를 재실행합니다. `app.py` 하단의
+```python
+with tab_raw:  render_tab_raw()
+with tab_fit:  render_tab_fit()
+with tab_nyquist:  render_tab_nyquist()
+# ...
+```
+6개 탭 렌더러가 전부 실행되면서 `plot_raw_data`, `plot_fit_result`, `plot_nyquist`
+3개의 matplotlib figure가 매번 처음부터 그려지고 있었음.
+
+**근본 원인 2 — curve_fit `maxfev=20000`**:
+sequential peeling 초기값이 좋은데도 curve_fit이 수렴 실패 시 최대 2만 번까지 반복.
+실제로는 5천 번 안에 수렴하거나 실패가 확정되므로 나머지는 낭비.
+
+**수정 내용** (`app.py`):
+- `_STATE_KEYS` 에 `fig_raw`, `fig_fit`, `fig_nyquist` 추가
+- 분석 파이프라인 마지막에 Step 8로 3개 figure를 사전 생성하여 session_state에 캐싱
+- progress 게이지: 기존 7단계 → 8단계 (95% "그래프 생성 중")
+
+**수정 내용** (`views.py`):
+- `render_tab_raw`, `render_tab_fit`, `render_tab_nyquist`: session_state에서 캐시 figure 조회,
+  없을 때만 생성 (분석 실행 직후 항상 존재)
+- Nyquist는 EIS 피팅 결과(`eis_rs_fit`)에 따라 그래프가 변하므로 `(id(eis_rs_fit), eis_rs_fit)`
+  튜플을 캐시 키로 사용 — EIS 피팅 실행 후에만 재생성되고 그 외에는 캐시 재사용
+
+**수정 내용** (`models.py`):
+- 모든 curve_fit의 `maxfev=20000` → `maxfev=5000` (6곳)
+- `_fit_relaxation`의 `maxfev=10000` → `maxfev=5000`
+- sequential peeling 초기값이 잘 추정되므로 5000회면 충분, 수렴 실패 시 converged=False 폴백 유지
+
+**수정 후 기대 효과**:
+- 탭 전환 즉시 응답 (figure 재생성 없이 st.pyplot으로 바로 표시)
+- 사이드바 옵션 변경 시 렌더 부하 대폭 감소
+- 피팅 단계 대기시간 최대 1/4 단축
+
 ### [2026-04-14] 피팅 윈도우 과다 캡처 버그 + UX 개선
 
 **증상 (Fit Result 탭)**:

@@ -172,12 +172,15 @@ def render_tab_raw() -> None:
             col6.metric("dt", f"{st.session_state.dt * 1000:.3f} ms",
                         help="p2 근처 로컬 샘플링 간격")
 
-        fig = plot_raw_data(
-            df,
-            st.session_state.idx_p0,
-            st.session_state.idx_p1,
-            st.session_state.idx_p2,
-        )
+        fig = st.session_state.get("fig_raw")
+        if fig is None:
+            fig = plot_raw_data(
+                df,
+                st.session_state.idx_p0,
+                st.session_state.idx_p1,
+                st.session_state.idx_p2,
+            )
+            st.session_state.fig_raw = fig
         st.pyplot(fig)
 
         with st.expander("📖 p0 / p1 / p2 란 무엇인가?"):
@@ -266,15 +269,18 @@ def render_tab_fit() -> None:
         col_a, col_b = st.columns([1.3, 1])
 
         with col_a:
-            fig = plot_fit_result(
-                st.session_state.t_fit,
-                st.session_state.V_fit,
-                st.session_state.V_pred,
-                result,
-                Vp2=st.session_state.Vp2,
-                I=st.session_state.I_set,
-                model=st.session_state.get("model_choice", "extended"),
-            )
+            fig = st.session_state.get("fig_fit")
+            if fig is None:
+                fig = plot_fit_result(
+                    st.session_state.t_fit,
+                    st.session_state.V_fit,
+                    st.session_state.V_pred,
+                    result,
+                    Vp2=st.session_state.Vp2,
+                    I=st.session_state.I_set,
+                    model=st.session_state.get("model_choice", "extended"),
+                )
+                st.session_state.fig_fit = fig
             st.pyplot(fig)
 
         with col_b:
@@ -425,13 +431,21 @@ def render_tab_nyquist() -> None:
         col_plot, col_info = st.columns([1.5, 1])
 
         with col_plot:
-            fig = plot_nyquist(
-                st.session_state.re_z,
-                st.session_state.neg_im_z,
-                eis_df=st.session_state.df_eis,
-                result=st.session_state.fit_result,
-                eis_rs_fit=eis_rs_fit,
-            )
+            # Cache key: Nyquist depends on eis_rs_fit which only changes
+            # when the user runs EIS fitting in the EIS tab.
+            cached_key = st.session_state.get("_fig_nyquist_rs_key")
+            current_key = (id(eis_rs_fit), eis_rs_fit)
+            fig = st.session_state.get("fig_nyquist")
+            if fig is None or cached_key != current_key:
+                fig = plot_nyquist(
+                    st.session_state.re_z,
+                    st.session_state.neg_im_z,
+                    eis_df=st.session_state.df_eis,
+                    result=st.session_state.fit_result,
+                    eis_rs_fit=eis_rs_fit,
+                )
+                st.session_state.fig_nyquist = fig
+                st.session_state._fig_nyquist_rs_key = current_key
             st.pyplot(fig)
 
         with col_info:

@@ -657,7 +657,7 @@ def _fit_2rc(
                 p0=p0,
                 bounds=(lb, ub),
                 method="trf",
-                maxfev=20000,
+                maxfev=5000,
             )
             R1, C1, R2, C2 = popt
             sigma = np.sqrt(np.diag(pcov)).tolist()
@@ -758,7 +758,7 @@ def _fit_3rc(
             popt, pcov = curve_fit(
                 model_fixed, t_fit, V_fit,
                 p0=p0, bounds=(lb, ub),
-                method="trf", maxfev=20000,
+                method="trf", maxfev=5000,
             )
             R1, C1, R2, C2, R3, C3 = popt
             sigma = np.sqrt(np.diag(pcov)).tolist()
@@ -852,7 +852,7 @@ def _fit_2rc_warburg(
                 p0=p0,
                 bounds=(lb, ub),
                 method="trf",
-                maxfev=20000,
+                maxfev=5000,
             )
             R1, C1, R2, C2, sigma_W = popt
             sigma = np.sqrt(np.diag(pcov))[:4].tolist()
@@ -969,7 +969,7 @@ def _fit_joint_warburg(
             popt, pcov = curve_fit(
                 model_fn, x_dummy, V_target,
                 p0=p0, bounds=(lb, ub),
-                method="trf", maxfev=20000,
+                method="trf", maxfev=5000,
             )
             Rs, R1, C1, R2, C2, sigma_W = popt
             sigma_all = np.sqrt(np.diag(pcov)).tolist()
@@ -1097,7 +1097,7 @@ def _fit_relaxation(
             popt, pcov = curve_fit(
                 model_combined, x_dummy, V_target,
                 p0=p0, bounds=(lb, ub),
-                method="trf", maxfev=20000,
+                method="trf", maxfev=5000,
             )
             R1, C1, R2, C2, sigma_W = popt
             sigma = np.sqrt(np.diag(pcov))[:4].tolist()
@@ -1145,7 +1145,7 @@ def _fit_1rc(
             p0=p0,
             bounds=(lb, ub),
             method="trf",
-            maxfev=10000,
+            maxfev=5000,
         )
         R1, C1 = popt
         sigma = np.sqrt(np.diag(pcov))

@@ -184,6 +184,8 @@ _STATE_KEYS = [
     "Rs_dcim_2wire",
     "t_ramp", "I_ramp", "V_ramp",
     "t_relax", "V_relax", "V_relax0", "idx_relax_start",
+    # Cached matplotlib figures — regenerated only on run, not on every rerun
+    "fig_raw", "fig_fit", "fig_nyquist",
 ]
 for _k in _STATE_KEYS:
     if _k not in st.session_state:
@@ -411,6 +413,21 @@ if run_button:
         )
         st.session_state.re_z     = re_z
         st.session_state.neg_im_z = neg_im_z
+
+        # ── Step 8: 그래프 사전 렌더링 (매 rerun 재생성 방지) ──────────────
+        _prog.progress(95, text="⑧ 그래프 생성 중…")
+        from plotter import plot_raw_data, plot_fit_result, plot_nyquist
+        st.session_state.fig_raw = plot_raw_data(df, idx_p0, idx_p1, idx_p2)
+        st.session_state.fig_fit = plot_fit_result(
+            t_fit, V_fit, V_pred, result,
+            Vp2=Vp2, I=I_set, model=model_choice,
+        )
+        st.session_state.fig_nyquist = plot_nyquist(
+            re_z, neg_im_z,
+            eis_df=st.session_state.df_eis,
+            result=result,
+            eis_rs_fit=None,  # EIS fit not yet run at analysis time
+        )
 
         _prog.progress(100, text="✅ 분석 완료!")
         st.success("✅ 분석 완료!")
