@@ -38,16 +38,26 @@ class FitResult:
     r2: float
     rmse_mv: float          # RMSE in millivolts
     converged: bool = True  # False if curve_fit failed to converge
+    sigma_W: float = 0.0
+    sigma_sigma_W: float = float("nan")
+    R3: float = 0.0
+    C3: float = 0.0
+    sigma_R3: float = float("nan")
+    sigma_C3: float = float("nan")
     tau1: float = field(init=False)
     tau2: float = field(init=False)
+    tau3: float = field(init=False)
     f1: float = field(init=False)
     f2: float = field(init=False)
+    f3: float = field(init=False)
 
     def __post_init__(self):
         self.tau1 = self.R1 * self.C1
         self.tau2 = self.R2 * self.C2
+        self.tau3 = self.R3 * self.C3
         self.f1 = 1.0 / (2.0 * math.pi * self.tau1) if self.tau1 > 0 else float("nan")
         self.f2 = 1.0 / (2.0 * math.pi * self.tau2) if self.tau2 > 0 else float("nan")
+        self.f3 = 1.0 / (2.0 * math.pi * self.tau3) if self.tau3 > 0 else float("nan")
 
 
 # ──────────────────────────────────────────────
@@ -68,6 +78,12 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.025, 0.8],
         "lb_1rc": [1e-6,  0.01],
         "ub_1rc": [0.5,   100.0],
+        "p0_3rc": [0.012, 0.5, 0.010, 20.0, 0.010, 120.0],
+        "lb_3rc": [1e-6, 0.01, 1e-6, 1.0, 1e-6, 5.0],
+        "ub_3rc": [0.5, 100.0, 0.5, 1000.0, 0.5, 5000.0],
+        "p0_warburg": [0.025, 0.8, 0.020, 80.0, 1e-4],
+        "lb_warburg": [1e-6, 0.01, 1e-6, 1.0, 0.0],
+        "ub_warburg": [0.5, 100.0, 0.5, 1000.0, 1.0],
         "fit_window_s": 5.0,
     },
     "21700_5Ah": {
@@ -79,6 +95,12 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.005, 2.0],
         "lb_1rc": [1e-6,  1e-3],
         "ub_1rc": [1.0,   500.0],
+        "p0_3rc": [0.002, 1.0, 0.003, 20.0, 0.005, 200.0],
+        "lb_3rc": [1e-6, 1e-3, 1e-6, 1e-3, 1e-6, 1e-3],
+        "ub_3rc": [1.0, 500.0, 1.0, 2000.0, 1.0, 5000.0],
+        "p0_warburg": [0.005, 2.0, 0.010, 150.0, 1e-4],
+        "lb_warburg": [1e-6, 1e-3, 1e-6, 1e-3, 0.0],
+        "ub_warburg": [1.0, 500.0, 1.0, 2000.0, 1.0],
         "fit_window_s": 5.0,
     },
     "4680_27Ah": {
@@ -90,6 +112,12 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.003, 20.0],
         "lb_1rc": [1e-6,  0.5],
         "ub_1rc": [0.1,   500.0],
+        "p0_3rc": [0.001, 5.0, 0.001, 100.0, 0.001, 1000.0],
+        "lb_3rc": [1e-6, 0.5, 1e-6, 10.0, 1e-6, 50.0],
+        "ub_3rc": [0.1, 500.0, 0.1, 5000.0, 0.1, 20000.0],
+        "p0_warburg": [0.003, 20.0, 0.003, 800.0, 1e-4],
+        "lb_warburg": [1e-6, 0.5, 1e-6, 50.0, 0.0],
+        "ub_warburg": [0.1, 500.0, 0.1, 5000.0, 1.0],
         "fit_window_s": 15.0,
     },
     "4695_32Ah": {
@@ -101,6 +129,12 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.002, 25.0],
         "lb_1rc": [1e-6,  0.5],
         "ub_1rc": [0.1,   500.0],
+        "p0_3rc": [0.001, 5.0, 0.001, 100.0, 0.001, 1200.0],
+        "lb_3rc": [1e-6, 0.5, 1e-6, 10.0, 1e-6, 50.0],
+        "ub_3rc": [0.1, 500.0, 0.1, 8000.0, 0.1, 25000.0],
+        "p0_warburg": [0.002, 25.0, 0.002, 1000.0, 1e-4],
+        "lb_warburg": [1e-6, 0.5, 1e-6, 50.0, 0.0],
+        "ub_warburg": [0.1, 500.0, 0.1, 8000.0, 1.0],
         "fit_window_s": 20.0,
     },
     "custom": {
@@ -112,6 +146,12 @@ CELL_PRESETS: dict[str, dict] = {
         "p0_1rc": [0.005, 2.0],
         "lb_1rc": [1e-6,  1e-3],
         "ub_1rc": [1.0,   500.0],
+        "p0_3rc": [0.002, 1.0, 0.003, 20.0, 0.005, 200.0],
+        "lb_3rc": [1e-6, 1e-3, 1e-6, 1e-3, 1e-6, 1e-3],
+        "ub_3rc": [1.0, 500.0, 1.0, 2000.0, 1.0, 5000.0],
+        "p0_warburg": [0.005, 2.0, 0.010, 150.0, 1e-4],
+        "lb_warburg": [1e-6, 1e-3, 1e-6, 1e-3, 0.0],
+        "ub_warburg": [1.0, 500.0, 1.0, 2000.0, 1.0],
         "fit_window_s": 5.0,
     },
 }
@@ -195,6 +235,60 @@ def voltage_response_1rc(
     return Vp2 + R1 * I * (1.0 - np.exp(-t / tau1))
 
 
+def voltage_response_2rc_warburg(
+    t: np.ndarray,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    sigma_W: float,
+    Vp2: float,
+    I: float,
+) -> np.ndarray:
+    """2RC time response plus a semi-empirical Warburg sqrt(t) drift."""
+    t = np.asarray(t, dtype=float)
+    return voltage_response_2rc(t, R1, C1, R2, C2, Vp2, I) + I * sigma_W * np.sqrt(np.maximum(t, 0.0))
+
+
+def voltage_response_3rc(
+    t: np.ndarray,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    R3: float,
+    C3: float,
+    Vp2: float,
+    I: float,
+) -> np.ndarray:
+    """Three-RC time-domain response."""
+    tau3 = R3 * C3
+    return (
+        voltage_response_2rc(t, R1, C1, R2, C2, Vp2, I)
+        + R3 * I * (1.0 - np.exp(-np.asarray(t, dtype=float) / tau3))
+    )
+
+
+def voltage_response_relaxation(
+    t: np.ndarray,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    V_relax0: float,
+    I_pre: float,
+) -> np.ndarray:
+    """Voltage relaxation after current interruption."""
+    tau1 = R1 * C1
+    tau2 = R2 * C2
+    t = np.asarray(t, dtype=float)
+    return (
+        V_relax0
+        - R1 * I_pre * (1.0 - np.exp(-t / tau1))
+        - R2 * I_pre * (1.0 - np.exp(-t / tau2))
+    )
+
+
 # ──────────────────────────────────────────────
 # Frequency-domain impedance model
 # ──────────────────────────────────────────────
@@ -217,6 +311,35 @@ def impedance_2rc(
     return Rs + Z1 + Z2
 
 
+def impedance_3rc(
+    f: np.ndarray,
+    Rs: float,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    R3: float,
+    C3: float,
+) -> np.ndarray:
+    omega = 2.0 * math.pi * np.asarray(f, dtype=float)
+    Z3 = R3 / (1.0 + 1j * omega * R3 * C3)
+    return impedance_2rc(f, Rs, R1, C1, R2, C2) + Z3
+
+
+def impedance_2rc_warburg(
+    f: np.ndarray,
+    Rs: float,
+    R1: float,
+    C1: float,
+    R2: float,
+    C2: float,
+    sigma_W: float,
+) -> np.ndarray:
+    omega = 2.0 * math.pi * np.asarray(f, dtype=float)
+    Zw = sigma_W * (1.0 - 1j) / np.sqrt(np.maximum(omega, 1e-30))
+    return impedance_2rc(f, Rs, R1, C1, R2, C2) + Zw
+
+
 # ──────────────────────────────────────────────
 # Parameter fitting
 # ──────────────────────────────────────────────
@@ -230,6 +353,12 @@ def fit_parameters(
     model: str = "extended",
     use_lmfit: bool = False,
     cell_preset: dict | None = None,
+    t_ramp: np.ndarray | None = None,
+    V_ramp: np.ndarray | None = None,
+    I_ramp: np.ndarray | None = None,
+    t_relax: np.ndarray | None = None,
+    V_relax: np.ndarray | None = None,
+    V_relax0: float | None = None,
 ) -> FitResult:
     """Fit equivalent circuit parameters to measured voltage transient.
 
@@ -255,8 +384,36 @@ def fit_parameters(
 
     if model == "simple":
         return _fit_1rc(t_fit, V_fit, Rs, I, Vp2, cell_preset)
+    if model == "warburg":
+        return _fit_2rc_warburg(t_fit, V_fit, Rs, I, Vp2, cell_preset)
+    if model == "joint_warburg":
+        return _fit_joint_warburg(t_fit, V_fit, Rs, I, Vp2, cell_preset, t_ramp, V_ramp, I_ramp)
+    if model == "relaxation" and t_relax is not None and V_relax is not None and V_relax0 is not None:
+        return _fit_relaxation(t_fit, V_fit, Rs, I, Vp2, cell_preset, t_relax, V_relax, V_relax0)
+    if model == "3rc":
+        return _fit_3rc(t_fit, V_fit, Rs, I, Vp2, cell_preset)
 
     return _fit_2rc(t_fit, V_fit, Rs, I, Vp2, use_lmfit, cell_preset)
+
+
+def _fit_with_curve_fit(model_fixed, t_fit, V_fit, p0, lb, ub, maxfev=5000):
+    converged = True
+    popt = np.asarray(p0, dtype=float)
+    sigma = np.full(len(popt), np.nan)
+    try:
+        popt, pcov = curve_fit(
+            model_fixed,
+            t_fit,
+            V_fit,
+            p0=p0,
+            bounds=(lb, ub),
+            method="trf",
+            maxfev=maxfev,
+        )
+        sigma = np.sqrt(np.diag(pcov))
+    except (RuntimeError, ValueError, FloatingPointError):
+        converged = False
+    return popt, sigma, converged
 
 
 def _fit_2rc(
@@ -313,7 +470,7 @@ def _fit_2rc(
                 p0=p0,
                 bounds=(lb, ub),
                 method="trf",
-                maxfev=10000,
+                maxfev=5000,
             )
             R1, C1, R2, C2 = popt
             sigma = np.sqrt(np.diag(pcov)).tolist()
@@ -358,7 +515,7 @@ def _fit_1rc(
             p0=p0,
             bounds=(lb, ub),
             method="trf",
-            maxfev=10000,
+            maxfev=5000,
         )
         R1, C1 = popt
         sigma = np.sqrt(np.diag(pcov))
@@ -377,6 +534,164 @@ def _fit_1rc(
     )
 
 
+def _fit_2rc_warburg(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Rs: float,
+    I: float,
+    Vp2: float,
+    cell_preset: dict,
+) -> FitResult:
+    p0 = cell_preset.get("p0_warburg", cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0]) + [1e-4])
+    lb = cell_preset.get("lb_warburg", cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3]) + [0.0])
+    ub = cell_preset.get("ub_warburg", cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0]) + [1.0])
+
+    def model_fixed(t, R1, C1, R2, C2, sigma_W):
+        return voltage_response_2rc_warburg(t, R1, C1, R2, C2, sigma_W, Vp2, I)
+
+    popt, sigma, converged = _fit_with_curve_fit(model_fixed, t_fit, V_fit, p0, lb, ub)
+    R1, C1, R2, C2, sigma_W = popt
+    V_pred = model_fixed(t_fit, R1, C1, R2, C2, sigma_W)
+    return FitResult(
+        Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[0], sigma_C1=sigma[1],
+        sigma_R2=sigma[2], sigma_C2=sigma[3],
+        r2=_r2(V_fit, V_pred),
+        rmse_mv=_rmse_mv(V_fit, V_pred),
+        converged=converged,
+        sigma_W=float(sigma_W),
+        sigma_sigma_W=float(sigma[4]),
+    )
+
+
+def _fit_3rc(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Rs: float,
+    I: float,
+    Vp2: float,
+    cell_preset: dict,
+) -> FitResult:
+    p0 = cell_preset.get("p0_3rc")
+    lb = cell_preset.get("lb_3rc")
+    ub = cell_preset.get("ub_3rc")
+    if p0 is None or lb is None or ub is None:
+        p0 = cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0]) + [0.003, 300.0]
+        lb = cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3]) + [1e-6, 1e-3]
+        ub = cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0]) + [1.0, 10000.0]
+
+    def model_fixed(t, R1, C1, R2, C2, R3, C3):
+        return voltage_response_3rc(t, R1, C1, R2, C2, R3, C3, Vp2, I)
+
+    popt, sigma, converged = _fit_with_curve_fit(model_fixed, t_fit, V_fit, p0, lb, ub)
+    R1, C1, R2, C2, R3, C3 = popt
+    V_pred = model_fixed(t_fit, R1, C1, R2, C2, R3, C3)
+    return FitResult(
+        Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[0], sigma_C1=sigma[1],
+        sigma_R2=sigma[2], sigma_C2=sigma[3],
+        r2=_r2(V_fit, V_pred),
+        rmse_mv=_rmse_mv(V_fit, V_pred),
+        converged=converged,
+        R3=float(R3), C3=float(C3),
+        sigma_R3=float(sigma[4]), sigma_C3=float(sigma[5]),
+    )
+
+
+def _fit_joint_warburg(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Rs: float,
+    I: float,
+    Vp2: float,
+    cell_preset: dict,
+    t_ramp: np.ndarray | None,
+    V_ramp: np.ndarray | None,
+    I_ramp: np.ndarray | None,
+) -> FitResult:
+    if t_ramp is None or V_ramp is None or I_ramp is None or len(t_ramp) < 3:
+        return _fit_2rc_warburg(t_fit, V_fit, Rs, I, Vp2, cell_preset)
+
+    p0 = [Rs] + cell_preset.get("p0_warburg", cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0]) + [1e-4])
+    base_lb = cell_preset.get("lb_warburg", cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3]) + [0.0])
+    base_ub = cell_preset.get("ub_warburg", cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0]) + [1.0])
+    lb = [1e-7] + base_lb
+    ub = [max(Rs * 5.0, 1.0)] + base_ub
+
+    # Approximate ramp as the instantaneous ohmic term plus RC/Warburg terms
+    # evaluated against elapsed time from p2. The ramp mainly helps free Rs
+    # from the 2-wire p1 estimate without overfitting the CC segment.
+    def model_combined(x, Rs_fit, R1, C1, R2, C2, sigma_W):
+        n_ramp = len(t_ramp)
+        x_ramp = np.asarray(x[:n_ramp], dtype=float)
+        x_cc = np.asarray(x[n_ramp:], dtype=float)
+        ramp_elapsed = np.maximum(x_ramp - float(x_ramp[0]), 0.0)
+        V0 = float(V_ramp[0])
+        V_r = (
+            V0
+            + Rs_fit * (I_ramp - float(I_ramp[0]))
+            + R1 * I_ramp * (1.0 - np.exp(-ramp_elapsed / (R1 * C1)))
+            + R2 * I_ramp * (1.0 - np.exp(-ramp_elapsed / (R2 * C2)))
+            + I_ramp * sigma_W * np.sqrt(ramp_elapsed)
+        )
+        V_c = voltage_response_2rc_warburg(x_cc, R1, C1, R2, C2, sigma_W, Vp2, I)
+        return np.concatenate([V_r, V_c])
+
+    x = np.concatenate([np.asarray(t_ramp, dtype=float), np.asarray(t_fit, dtype=float)])
+    y = np.concatenate([np.asarray(V_ramp, dtype=float), np.asarray(V_fit, dtype=float)])
+    popt, sigma, converged = _fit_with_curve_fit(model_combined, x, y, p0, lb, ub)
+    Rs_fit, R1, C1, R2, C2, sigma_W = popt
+    V_pred = voltage_response_2rc_warburg(t_fit, R1, C1, R2, C2, sigma_W, Vp2, I)
+    return FitResult(
+        Rs=float(Rs_fit), R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[1], sigma_C1=sigma[2],
+        sigma_R2=sigma[3], sigma_C2=sigma[4],
+        r2=_r2(V_fit, V_pred),
+        rmse_mv=_rmse_mv(V_fit, V_pred),
+        converged=converged,
+        sigma_W=float(sigma_W),
+        sigma_sigma_W=float(sigma[5]),
+    )
+
+
+def _fit_relaxation(
+    t_fit: np.ndarray,
+    V_fit: np.ndarray,
+    Rs: float,
+    I: float,
+    Vp2: float,
+    cell_preset: dict,
+    t_relax: np.ndarray,
+    V_relax: np.ndarray,
+    V_relax0: float,
+) -> FitResult:
+    p0 = cell_preset.get("p0_warburg", cell_preset.get("p0", [0.005, 2.0, 0.010, 150.0]) + [1e-4])
+    lb = cell_preset.get("lb_warburg", cell_preset.get("lb", [1e-6, 1e-3, 1e-6, 1e-3]) + [0.0])
+    ub = cell_preset.get("ub_warburg", cell_preset.get("ub", [1.0, 500.0, 1.0, 2000.0]) + [1.0])
+
+    def model_combined(x, R1, C1, R2, C2, sigma_W):
+        n_cc = len(t_fit)
+        V_cc = voltage_response_2rc_warburg(x[:n_cc], R1, C1, R2, C2, sigma_W, Vp2, I)
+        V_rel = voltage_response_relaxation(x[n_cc:], R1, C1, R2, C2, V_relax0, I)
+        return np.concatenate([V_cc, V_rel])
+
+    x = np.concatenate([t_fit, t_relax])
+    y = np.concatenate([V_fit, V_relax])
+    popt, sigma, converged = _fit_with_curve_fit(model_combined, x, y, p0, lb, ub)
+    R1, C1, R2, C2, sigma_W = popt
+    V_pred = voltage_response_2rc_warburg(t_fit, R1, C1, R2, C2, sigma_W, Vp2, I)
+    return FitResult(
+        Rs=Rs, R1=R1, C1=C1, R2=R2, C2=C2,
+        sigma_R1=sigma[0], sigma_C1=sigma[1],
+        sigma_R2=sigma[2], sigma_C2=sigma[3],
+        r2=_r2(V_fit, V_pred),
+        rmse_mv=_rmse_mv(V_fit, V_pred),
+        converged=converged,
+        sigma_W=float(sigma_W),
+        sigma_sigma_W=float(sigma[4]),
+    )
+
+
 # ──────────────────────────────────────────────
 # Nyquist curve generation
 # ──────────────────────────────────────────────
@@ -387,6 +702,9 @@ def compute_nyquist(
     C1: float,
     R2: float,
     C2: float,
+    sigma_W: float = 0.0,
+    R3: float = 0.0,
+    C3: float = 0.0,
     f_range: tuple[float, float] | None = None,
     n_points: int = 500,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -403,10 +721,9 @@ def compute_nyquist(
     neg_im_z : -Im(Z) array [Ohm]
     """
     if f_range is None:
-        tau1 = R1 * C1
-        tau2 = R2 * C2
-        tau_max = max(tau1, tau2, 1e-6)
-        tau_min = min(tau1, tau2, 1e-6)
+        taus = [x for x in (R1 * C1, R2 * C2, R3 * C3) if x > 0]
+        tau_max = max(taus) if taus else 1e-6
+        tau_min = min(taus) if taus else 1e-6
         f_lo = 0.05 / (2.0 * math.pi * tau_max)
         f_hi = 20.0 / (2.0 * math.pi * tau_min)
         f_range = (max(f_lo, 1e-4), min(f_hi, 1e6))
@@ -414,7 +731,12 @@ def compute_nyquist(
     f_array = np.logspace(
         math.log10(f_range[0]), math.log10(f_range[1]), n_points
     )
-    Z = impedance_2rc(f_array, Rs, R1, C1, R2, C2)
+    if R3 > 0 and C3 > 0:
+        Z = impedance_3rc(f_array, Rs, R1, C1, R2, C2, R3, C3)
+    elif sigma_W and sigma_W > 0:
+        Z = impedance_2rc_warburg(f_array, Rs, R1, C1, R2, C2, sigma_W)
+    else:
+        Z = impedance_2rc(f_array, Rs, R1, C1, R2, C2)
     return np.real(Z), -np.imag(Z)
 
 

@@ -143,10 +143,9 @@ def prepare_fit_data(
 ) -> tuple[np.ndarray, np.ndarray, float, float]:
     """Extract and prepare the voltage transient window for curve fitting.
 
-    Window selection uses sample count (pos_p2 + n_samples), NOT searchsorted.
-    searchsorted requires monotonically increasing time, which fails when
-    BioLogic files reset time at the start of each sequence/technique.
-    dt is the global median sampling interval of the whole file.
+    Window selection uses the actual elapsed time after p2. BioLogic files can
+    mix a fast DCIM burst with slower CC samples, so sample-count windows can
+    accidentally capture tens of seconds when the user asked for only a few.
 
     Parameters
     ----------
@@ -182,15 +181,8 @@ def prepare_fit_data(
                 "Check that the time column is in seconds and monotonically increasing."
             )
 
-    # ── Window size: count-based (robust to time resets) ─────────────────
-    # searchsorted on a non-monotonic time array (BioLogic sequence resets)
-    # returns unpredictable positions.  Using a fixed sample count avoids
-    # this entirely.
-    n_samples = max(2, int(round(window_s / dt)))
-
-    # ── Row-position of p2 ────────────────────────────────────────────────
     pos_p2 = df.index.get_loc(idx_p2)
-    pos_end = min(pos_p2 + n_samples, len(df))
+    pos_end = _window_end_by_elapsed_time(time_all, pos_p2, window_s)
 
     if pos_end <= pos_p2:
         raise ValueError(
@@ -225,6 +217,84 @@ def prepare_fit_data(
             t_fit = t_new
 
     return t_fit, V_window.copy(), Vp2, dt
+
+
+def _window_end_by_elapsed_time(time_all: np.ndarray, pos_start: int, window_s: float) -> int:
+    """Return an exclusive end position using elapsed time from pos_start.
+
+    If the time column resets at a BioLogic sequence boundary, stop just before
+    that reset so interpolation and fitting see a monotonic time vector.
+    """
+    if pos_start >= len(time_all):
+        return len(time_all)
+
+    rel = np.asarray(time_all[pos_start:], dtype=float) - float(time_all[pos_start])
+    resets = np.flatnonzero(np.diff(rel) < 0)
+    local_limit = int(resets[0] + 1) if len(resets) else len(rel)
+    rel_mono = rel[:local_limit]
+
+    pos_local_end = int(np.searchsorted(rel_mono, window_s, side="right"))
+    pos_local_end = max(2, pos_local_end)
+    return min(pos_start + pos_local_end, len(time_all))
+
+
+def prepare_joint_fit_data(
+    df: pd.DataFrame,
+    idx_p0: int,
+    idx_p2: int,
+    window_s: float = 5.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Extract ramp(p0→p2) and CC(p2→window) arrays for joint Warburg fitting."""
+    time_all = df["time_s"].values
+    volt_all = df["voltage_V"].values
+    curr_all = df["current_A"].values
+    pos_p0 = df.index.get_loc(idx_p0)
+    pos_p2 = df.index.get_loc(idx_p2)
+    if pos_p2 <= pos_p0:
+        raise ValueError("idx_p2 must be after idx_p0 for joint fitting.")
+
+    pos_cc_end = _window_end_by_elapsed_time(time_all, pos_p2, window_s)
+    t0 = float(time_all[pos_p2])
+    t_ramp = time_all[pos_p0:pos_p2 + 1] - t0
+    V_ramp = volt_all[pos_p0:pos_p2 + 1]
+    I_ramp = curr_all[pos_p0:pos_p2 + 1]
+    t_cc = time_all[pos_p2:pos_cc_end] - t0
+    V_cc = volt_all[pos_p2:pos_cc_end]
+    Vp2 = float(V_cc[0])
+    return t_ramp, V_ramp, I_ramp, t_cc, V_cc, Vp2
+
+
+def find_relaxation_start(
+    df: pd.DataFrame,
+    I_set: float,
+    search_after_idx: int,
+) -> int | None:
+    """Find first current-interruption point after p2 (|I| < 5% I_set)."""
+    pos_start = df.index.get_loc(search_after_idx)
+    search = df.iloc[pos_start + 1:]
+    if search.empty:
+        return None
+    mask = search["current_A"].abs() < 0.05 * abs(I_set)
+    if not mask.any():
+        return None
+    return int(mask.idxmax())
+
+
+def prepare_relaxation_data(
+    df: pd.DataFrame,
+    idx_relax_start: int,
+    window_s: float = 30.0,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Extract voltage relaxation after current is interrupted."""
+    time_all = df["time_s"].values
+    volt_all = df["voltage_V"].values
+    pos_start = df.index.get_loc(idx_relax_start)
+    pos_end = _window_end_by_elapsed_time(time_all, pos_start, window_s)
+    t_relax = time_all[pos_start:pos_end] - float(time_all[pos_start])
+    V_relax = volt_all[pos_start:pos_end]
+    if len(t_relax) < 3:
+        raise ValueError("Not enough relaxation data after current interruption.")
+    return t_relax, V_relax.copy(), float(V_relax[0])
 
 
 # ──────────────────────────────────────────────

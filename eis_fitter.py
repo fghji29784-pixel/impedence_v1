@@ -298,6 +298,7 @@ def fit_eis_model(
     re_z: np.ndarray,
     neg_im_z: np.ndarray,
     model_name: str,
+    rs_min_bound: float | None = None,
     p0_override: Optional[list] = None,
 ) -> EISFitResult:
     """
@@ -320,8 +321,10 @@ def fit_eis_model(
 
     geo = _estimate_p0_from_geometry(freq, re_z, neg_im_z)
     p0 = p0_override if p0_override is not None else m["make_p0"](geo)
-    lo = m["bounds_lo"]
+    lo = list(m["bounds_lo"])
     hi = m["bounds_hi"]
+    if rs_min_bound is not None:
+        lo[0] = max(float(lo[0]), float(rs_min_bound))
 
     # Clamp p0 inside bounds with additive epsilon.
     # Additive (not multiplicative) ensures CPE alpha near 1.0 is reachable.
@@ -430,7 +433,7 @@ def fit_eis_all_models(
     # wrong parameter estimates (R² << 0).  Keep only the capacitive arc
     # region for fitting, but return the full data in EISFitResult for
     # display purposes.
-    cap_mask = neg_im_z >= 0
+    cap_mask = neg_im_z > 0
     if cap_mask.sum() >= 5:
         freq_fit  = freq[cap_mask]
         re_z_fit  = re_z[cap_mask]
@@ -438,11 +441,12 @@ def fit_eis_all_models(
     else:
         # Fallback: use all data if almost no capacitive points
         freq_fit, re_z_fit, nim_fit = freq, re_z, neg_im_z
+    rs_min_bound = max(float(np.min(re_z_fit)) * 0.95, 1e-7)
 
     results = []
     for name in MODELS:
         try:
-            r = fit_eis_model(freq_fit, re_z_fit, nim_fit, name)
+            r = fit_eis_model(freq_fit, re_z_fit, nim_fit, name, rs_min_bound=rs_min_bound)
             # Store the FULL (unfiltered) measured data for display
             r.freq          = freq
             r.re_z_meas     = re_z

@@ -165,16 +165,18 @@ def render_tab_raw() -> None:
             col6.metric("dt", f"{st.session_state.dt * 1000:.3f} ms",
                         help="p2 근처 로컬 샘플링 간격")
 
-        fig = plot_raw_data(
-            df,
-            st.session_state.idx_p0,
-            st.session_state.idx_p1,
-            st.session_state.idx_p2,
-        )
+        fig = st.session_state.get("fig_raw")
+        if fig is None:
+            fig = plot_raw_data(
+                df,
+                st.session_state.idx_p0,
+                st.session_state.idx_p1,
+                st.session_state.idx_p2,
+            )
         st.pyplot(fig)
 
         with st.expander("📖 p0 / p1 / p2 란 무엇인가?"):
-            st.markdown("""
+            st.markdown(r"""
 | 포인트 | 정의 | 역할 |
 |--------|------|------|
 | **p0** | 전류 인가 직전 마지막 안정 상태 | 기준 OCV, 기준 전류 |
@@ -250,15 +252,17 @@ def render_tab_fit() -> None:
         col_a, col_b = st.columns([1.3, 1])
 
         with col_a:
-            fig = plot_fit_result(
-                st.session_state.t_fit,
-                st.session_state.V_fit,
-                st.session_state.V_pred,
-                result,
-                Vp2=st.session_state.Vp2,
-                I=st.session_state.I_set,
-                model=st.session_state.get("model_choice", "extended"),
-            )
+            fig = st.session_state.get("fig_fit")
+            if fig is None:
+                fig = plot_fit_result(
+                    st.session_state.t_fit,
+                    st.session_state.V_fit,
+                    st.session_state.V_pred,
+                    result,
+                    Vp2=st.session_state.Vp2,
+                    I=st.session_state.I_set,
+                    model=st.session_state.get("model_choice", "extended"),
+                )
             st.pyplot(fig)
 
         with col_b:
@@ -280,30 +284,31 @@ def render_tab_fit() -> None:
 
         st.markdown("#### 📊 전체 파라미터")
         with st.expander("파라미터 상세 테이블 열기", expanded=True):
-            param_df = pd.DataFrame({
-                "파라미터": ["Rs", "R₁", "C₁", "R₂", "C₂", "τ₁", "τ₂", "f₁", "f₂", "R²", "RMSE"],
-                "값": [
-                    f"{result.Rs * 1000:.4f} mΩ",
-                    f"{result.R1 * 1000:.4f} mΩ",
-                    f"{result.C1:.4f} F",
-                    f"{result.R2 * 1000:.4f} mΩ",
-                    f"{result.C2:.4f} F",
-                    f"{result.tau1 * 1000:.3f} ms",
-                    f"{result.tau2:.4f} s",
-                    f"{result.f1:.3f} Hz",
-                    f"{result.f2:.5f} Hz",
-                    f"{result.r2:.6f}",
-                    f"{result.rmse_mv:.4f} mV",
-                ],
-                "±1σ": [
-                    "—",
-                    f"{result.sigma_R1 * 1000:.4f} mΩ",
-                    f"{result.sigma_C1:.4f} F",
-                    f"{result.sigma_R2 * 1000:.4f} mΩ",
-                    f"{result.sigma_C2:.4f} F",
-                    "—", "—", "—", "—", "—", "—",
-                ],
-            })
+            rows = [
+                ("Rs", f"{result.Rs * 1000:.4f} mΩ", "—"),
+                ("R₁", f"{result.R1 * 1000:.4f} mΩ", f"{result.sigma_R1 * 1000:.4f} mΩ"),
+                ("C₁", f"{result.C1:.4f} F", f"{result.sigma_C1:.4f} F"),
+                ("R₂", f"{result.R2 * 1000:.4f} mΩ", f"{result.sigma_R2 * 1000:.4f} mΩ"),
+                ("C₂", f"{result.C2:.4f} F", f"{result.sigma_C2:.4f} F"),
+            ]
+            if getattr(result, "R3", 0.0) > 0:
+                rows.extend([
+                    ("R₃", f"{result.R3 * 1000:.4f} mΩ", f"{result.sigma_R3 * 1000:.4f} mΩ"),
+                    ("C₃", f"{result.C3:.4f} F", f"{result.sigma_C3:.4f} F"),
+                    ("τ₃", f"{result.tau3:.4f} s", "—"),
+                    ("f₃", f"{result.f3:.5f} Hz", "—"),
+                ])
+            if getattr(result, "sigma_W", 0.0) > 0:
+                rows.append(("σ_W", f"{result.sigma_W:.6g} Ω·s⁻¹ᐟ²", f"{result.sigma_sigma_W:.6g}"))
+            rows.extend([
+                ("τ₁", f"{result.tau1 * 1000:.3f} ms", "—"),
+                ("τ₂", f"{result.tau2:.4f} s", "—"),
+                ("f₁", f"{result.f1:.3f} Hz", "—"),
+                ("f₂", f"{result.f2:.5f} Hz", "—"),
+                ("R²", f"{result.r2:.6f}", "—"),
+                ("RMSE", f"{result.rmse_mv:.4f} mV", "—"),
+            ])
+            param_df = pd.DataFrame(rows, columns=["파라미터", "값", "±1σ"])
             st.dataframe(param_df, use_container_width=True, hide_index=True)
 
         with st.expander("📖 각 파라미터의 물리적 의미"):
@@ -368,12 +373,18 @@ def render_tab_nyquist() -> None:
         col_plot, col_info = st.columns([1.5, 1])
 
         with col_plot:
-            fig = plot_nyquist(
-                st.session_state.re_z,
-                st.session_state.neg_im_z,
-                eis_df=st.session_state.df_eis,
-                result=st.session_state.fit_result,
-            )
+            key = id(st.session_state.get("eis_fit_results"))
+            fig = st.session_state.get("fig_nyquist")
+            if fig is None or st.session_state.get("fig_nyquist_key") != key:
+                fig = plot_nyquist(
+                    st.session_state.re_z,
+                    st.session_state.neg_im_z,
+                    eis_df=st.session_state.df_eis,
+                    result=st.session_state.fit_result,
+                    eis_fit_results=st.session_state.get("eis_fit_results"),
+                )
+                st.session_state.fig_nyquist = fig
+                st.session_state.fig_nyquist_key = key
             st.pyplot(fig)
 
         with col_info:

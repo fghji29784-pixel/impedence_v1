@@ -102,14 +102,16 @@ def render_current_unit() -> str:
 def render_model_selector() -> str:
     """등가회로 모델 선택 위젯.
 
-    Returns
-    -------
-    'extended' or 'simple'
+    Returns one of: extended, warburg, joint_warburg, relaxation, 3rc, simple.
     """
     choice = st.selectbox(
         "등가회로 모델",
         options=[
             "Extended Randles  (Rs + R1C1 + R2C2)  ← 권장",
+            "Warburg  (2RC + σ√t diffusion)",
+            "Joint Warburg  (ramp + CC, fitted Rs)",
+            "Relaxation  (HPPC current-off segment)",
+            "3RC  (Rs + R1C1 + R2C2 + R3C3)",
             "Simple Randles    (Rs + R1C1)",
         ],
         index=0,
@@ -122,10 +124,20 @@ def render_model_selector() -> str:
             "→ 빠른 스크리닝 또는 단순 Rs/R1 확인 시 사용."
         ),
     )
-    return "simple" if "Simple" in choice else "extended"
+    if choice.startswith("Simple"):
+        return "simple"
+    if choice.startswith("Warburg"):
+        return "warburg"
+    if choice.startswith("Joint"):
+        return "joint_warburg"
+    if choice.startswith("Relaxation"):
+        return "relaxation"
+    if choice.startswith("3RC"):
+        return "3rc"
+    return "extended"
 
 
-def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]:
+def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float, float]:
     """p2 수동 지정 및 피팅 창 설정.
 
     Parameters
@@ -134,7 +146,7 @@ def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]
 
     Returns
     -------
-    (p2_override, window_s)
+    (p2_override, window_s, relax_window_s)
     """
     use_manual = st.checkbox(
         "p2 인덱스 수동 지정",
@@ -166,7 +178,15 @@ def render_manual_range(default_window: float = 5.0) -> tuple[int | None, float]
             "• 4680/4695 같은 대형 셀은 15–20 s 이상 권장."
         ),
     ))
-    return p2_override, window_s
+    relax_window_s = float(st.number_input(
+        "Relaxation 창 (전류 차단 후 초)",
+        min_value=1.0,
+        max_value=300.0,
+        value=30.0,
+        step=1.0,
+        help="Relaxation 모델 선택 시 전류 차단 이후 사용할 시간 범위입니다.",
+    ))
+    return p2_override, window_s, relax_window_s
 
 
 def render_fit_engine() -> bool:

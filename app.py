@@ -19,8 +19,24 @@ import traceback
 import streamlit as st
 
 from loader import load_charge_data, load_eis_data
-from preprocessor import find_p0_p1_p2, calculate_Rs, prepare_fit_data, detect_I_set
-from models import fit_parameters, compute_nyquist, voltage_response_2rc, voltage_response_1rc
+from preprocessor import (
+    find_p0_p1_p2,
+    calculate_Rs,
+    prepare_fit_data,
+    prepare_joint_fit_data,
+    find_relaxation_start,
+    prepare_relaxation_data,
+    detect_I_set,
+)
+from models import (
+    fit_parameters,
+    compute_nyquist,
+    voltage_response_2rc,
+    voltage_response_1rc,
+    voltage_response_2rc_warburg,
+    voltage_response_3rc,
+)
+from plotter import plot_raw_data, plot_fit_result, plot_nyquist
 from sidebar import (
     render_cell_selector,
     render_file_upload,
@@ -64,7 +80,15 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0D1B2A 0%, #1C3A5E 100%);
 }
-[data-testid="stSidebar"] * { color: #E0EAF5 !important; }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] label { color: #E0EAF5 !important; }
+[data-testid="stSidebar"] [data-baseweb="select"] *,
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea {
+    color: #1A1A1A !important;
+}
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     color: #64C8E8 !important;
@@ -164,6 +188,10 @@ _STATE_KEYS = [
     "cell_key", "nominal_cap_ah",
     "model_choice",
     "eis_fit_results",
+    "Rs_dcim_2wire",
+    "t_ramp", "V_ramp", "I_ramp",
+    "t_relax", "V_relax", "V_relax0",
+    "fig_raw", "fig_fit", "fig_nyquist", "fig_nyquist_key",
 ]
 for _k in _STATE_KEYS:
     if _k not in st.session_state:
@@ -204,7 +232,7 @@ with st.sidebar:
 
     st.markdown('<span class="step-badge">4</span> **고급 옵션** *(선택)*', unsafe_allow_html=True)
     st.subheader("🔧 고급 설정")
-    p2_override, window_s = render_manual_range(default_window=cell_preset["fit_window_s"])
+    p2_override, window_s, relax_window_s = render_manual_range(default_window=cell_preset["fit_window_s"])
     use_lmfit = render_fit_engine()
 
     st.markdown("---")
@@ -288,6 +316,7 @@ if run_button:
         with st.spinner("Rs 계산 중…"):
             Rs = calculate_Rs(df, idx_p0, idx_p1)
             st.session_state.Rs = Rs
+            st.session_state.Rs_dcim_2wire = Rs
 
         with st.spinner("피팅 데이터 준비 중…"):
             t_fit, V_fit, Vp2, dt = prepare_fit_data(df, idx_p2, window_s=window_s)
@@ -295,6 +324,30 @@ if run_button:
             st.session_state.V_fit = V_fit
             st.session_state.Vp2   = Vp2
             st.session_state.dt    = dt
+            t_ramp = V_ramp = I_ramp = None
+            t_relax = V_relax = V_relax0 = None
+            if model_choice == "joint_warburg":
+                t_ramp, V_ramp, I_ramp, t_fit, V_fit, Vp2 = prepare_joint_fit_data(
+                    df, idx_p0, idx_p2, window_s=window_s
+                )
+                st.session_state.t_ramp = t_ramp
+                st.session_state.V_ramp = V_ramp
+                st.session_state.I_ramp = I_ramp
+                st.session_state.t_fit = t_fit
+                st.session_state.V_fit = V_fit
+                st.session_state.Vp2 = Vp2
+            if model_choice == "relaxation":
+                idx_relax = find_relaxation_start(df, I_set, idx_p2)
+                if idx_relax is None:
+                    st.warning("전류 차단 구간을 찾지 못해 Relaxation 대신 Extended 모델로 피팅합니다.")
+                    model_choice = "extended"
+                else:
+                    t_relax, V_relax, V_relax0 = prepare_relaxation_data(
+                        df, idx_relax, window_s=relax_window_s
+                    )
+                    st.session_state.t_relax = t_relax
+                    st.session_state.V_relax = V_relax
+                    st.session_state.V_relax0 = V_relax0
 
         with st.spinner("등가회로 파라미터 피팅 중…"):
             result = fit_parameters(
@@ -305,8 +358,15 @@ if run_button:
                 model=model_choice,
                 use_lmfit=use_lmfit,
                 cell_preset=cell_preset,
+                t_ramp=t_ramp,
+                V_ramp=V_ramp,
+                I_ramp=I_ramp,
+                t_relax=t_relax,
+                V_relax=V_relax,
+                V_relax0=V_relax0,
             )
             st.session_state.fit_result = result
+            st.session_state.Rs = result.Rs
             st.session_state.nominal_cap_ah = cell_preset.get("nominal_capacity_ah")
             st.session_state.model_choice = model_choice
 
@@ -319,6 +379,16 @@ if run_button:
         with st.spinner("나이퀴스트 곡선 계산 중…"):
             if model_choice == "simple":
                 V_pred = voltage_response_1rc(t_fit, result.R1, result.C1, Vp2, I_set)
+            elif model_choice in ("warburg", "joint_warburg", "relaxation"):
+                V_pred = voltage_response_2rc_warburg(
+                    t_fit, result.R1, result.C1, result.R2, result.C2,
+                    result.sigma_W, Vp2, I_set
+                )
+            elif model_choice == "3rc":
+                V_pred = voltage_response_3rc(
+                    t_fit, result.R1, result.C1, result.R2, result.C2,
+                    result.R3, result.C3, Vp2, I_set
+                )
             else:
                 V_pred = voltage_response_2rc(
                     t_fit, result.R1, result.C1, result.R2, result.C2, Vp2, I_set
@@ -326,10 +396,31 @@ if run_button:
             st.session_state.V_pred = V_pred
 
             re_z, neg_im_z = compute_nyquist(
-                result.Rs, result.R1, result.C1, result.R2, result.C2
+                result.Rs, result.R1, result.C1, result.R2, result.C2,
+                sigma_W=result.sigma_W, R3=result.R3, C3=result.C3
             )
             st.session_state.re_z     = re_z
             st.session_state.neg_im_z = neg_im_z
+
+        with st.spinner("그래프 생성 중…"):
+            st.session_state.fig_raw = plot_raw_data(df, idx_p0, idx_p1, idx_p2)
+            st.session_state.fig_fit = plot_fit_result(
+                st.session_state.t_fit,
+                st.session_state.V_fit,
+                V_pred,
+                result,
+                Vp2=st.session_state.Vp2,
+                I=I_set,
+                model=model_choice,
+            )
+            st.session_state.fig_nyquist = plot_nyquist(
+                re_z,
+                neg_im_z,
+                eis_df=st.session_state.df_eis,
+                result=result,
+                eis_fit_results=st.session_state.eis_fit_results,
+            )
+            st.session_state.fig_nyquist_key = id(st.session_state.eis_fit_results)
 
         st.success("✅ 분석 완료!")
 
@@ -373,19 +464,19 @@ if run_button:
 # ──────────────────────────────────────────────
 
 with tab_raw:
-    render_tab_raw(st.session_state)
+    render_tab_raw()
 
 with tab_fit:
-    render_tab_fit(st.session_state)
+    render_tab_fit()
 
 with tab_nyquist:
-    render_tab_nyquist(st.session_state)
+    render_tab_nyquist()
 
 with tab_eis:
-    render_tab_eis(st.session_state)
+    render_tab_eis()
 
 with tab_diag:
-    render_tab_diag(st.session_state)
+    render_tab_diag()
 
 with tab_export:
-    render_tab_export(st.session_state)
+    render_tab_export()

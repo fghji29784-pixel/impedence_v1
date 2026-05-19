@@ -18,7 +18,16 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.figure import Figure
 
-from models import FitResult, voltage_response_2rc, voltage_response_1rc
+from models import (
+    FitResult,
+    voltage_response_2rc,
+    voltage_response_1rc,
+    voltage_response_2rc_warburg,
+    voltage_response_3rc,
+    impedance_2rc,
+    impedance_2rc_warburg,
+    impedance_3rc,
+)
 
 matplotlib.use("Agg")  # non-interactive backend for Streamlit
 
@@ -113,6 +122,16 @@ def plot_fit_result(
         t_dense = np.linspace(0.0, float(t_fit[-1]), 1000)
         if model == "simple":
             V_dense = voltage_response_1rc(t_dense, result.R1, result.C1, Vp2, I)
+        elif model in ("warburg", "joint_warburg", "relaxation"):
+            V_dense = voltage_response_2rc_warburg(
+                t_dense, result.R1, result.C1, result.R2, result.C2,
+                getattr(result, "sigma_W", 0.0), Vp2, I
+            )
+        elif model == "3rc":
+            V_dense = voltage_response_3rc(
+                t_dense, result.R1, result.C1, result.R2, result.C2,
+                getattr(result, "R3", 0.0), getattr(result, "C3", 0.0), Vp2, I
+            )
         else:
             V_dense = voltage_response_2rc(
                 t_dense, result.R1, result.C1, result.R2, result.C2, Vp2, I
@@ -207,6 +226,8 @@ def plot_nyquist(
     neg_im_z: np.ndarray,
     eis_df: pd.DataFrame | None = None,
     result: FitResult | None = None,
+    eis_fit_results: list | None = None,
+    eis_rs_fit: float | None = None,
 ) -> Figure:
     """Single-panel Nyquist plot.
 
@@ -271,8 +292,15 @@ def plot_nyquist(
         )
 
     # Annotate Rs (EIS) — high-frequency real-axis intercept
+    if eis_rs_fit is None and eis_fit_results:
+        best = next((r for r in eis_fit_results if getattr(r, "converged", False)), None)
+        if best is not None:
+            eis_rs_fit = best.params_dict.get("Rs")
     if eis_df is not None and len(eis_df) > 0:
-        rs_eis_mohm = float(eis_df["re_z"].min()) * 1000
+        if eis_rs_fit is None:
+            cap = eis_df[eis_df["neg_im_z"] >= 0]
+            eis_rs_fit = float(cap["re_z"].min() if len(cap) else eis_df["re_z"].min())
+        rs_eis_mohm = float(eis_rs_fit) * 1000
         ax.axvline(rs_eis_mohm, color="#F44336", linestyle=":", linewidth=0.8, alpha=0.6)
         ax.annotate(
             f"Rs(EIS)={rs_eis_mohm:.2f} mΩ",
@@ -312,8 +340,24 @@ def plot_eis_fit(eis_result) -> Figure:
     """
     re_meas  = eis_result.re_z_meas * 1000
     im_meas  = eis_result.neg_im_z_meas * 1000
-    re_fit   = np.real(eis_result.Z_fit) * 1000
-    im_fit   = -np.imag(eis_result.Z_fit) * 1000
+    f_dense = np.logspace(
+        np.log10(max(float(np.min(eis_result.freq)) / 10.0, 1e-6)),
+        np.log10(float(np.max(eis_result.freq)) * 100.0),
+        800,
+    )
+    params = eis_result.param_values
+    if eis_result.model_name == "2RC":
+        Z_dense = impedance_2rc(f_dense, *params)
+    elif eis_result.model_name == "3RC":
+        Z_dense = impedance_3rc(f_dense, *params)
+    elif eis_result.model_name == "Randles_W":
+        from eis_fitter import z_model_randles_w
+        Z_dense = z_model_randles_w(params, 2.0 * np.pi * f_dense)
+    else:
+        from eis_fitter import z_model_2rc_cpe
+        Z_dense = z_model_2rc_cpe(params, 2.0 * np.pi * f_dense)
+    re_fit   = np.real(Z_dense) * 1000
+    im_fit   = -np.imag(Z_dense) * 1000
 
     # Compute data span for square aspect
     all_re = np.concatenate([re_meas, re_fit])
@@ -328,7 +372,7 @@ def plot_eis_fit(eis_result) -> Figure:
                color="#F44336", s=22, zorder=4, label="EIS 실측", alpha=0.85)
 
     # Fitted curve (sorted by frequency for smooth line)
-    idx_sort = np.argsort(eis_result.freq)[::-1]
+    idx_sort = np.argsort(f_dense)[::-1]
     ax.plot(re_fit[idx_sort], im_fit[idx_sort],
             color="#2196F3", linewidth=2.0, zorder=3, label=f"피팅: {eis_result.model_name}")
 
