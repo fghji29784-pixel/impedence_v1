@@ -377,7 +377,7 @@ def find_relaxation_start(
 def prepare_relaxation_data(
     df: pd.DataFrame,
     idx_relax_start: int,
-    window_s: float = 30.0,
+    window_s: float = 40.0,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Extract voltage recovery data from the relaxation phase.
 
@@ -388,13 +388,16 @@ def prepare_relaxation_data(
 
     A longer window captures the slow RC (τ2 ~ seconds) and makes R2, C2
     estimation far more reliable than using the charge transient alone
-    (Hust et al. 2021; HPPC methodology).
+    (HPPC methodology). Białoń et al. 2023 (doi:10.3390/en16114255)
+    recommend ≥ 40 s to ensure τ2 is fully captured; the default was
+    updated from 30 s to 40 s accordingly.
 
     Parameters
     ----------
     df              : DataFrame with 'time_s', 'voltage_V'
     idx_relax_start : row-label index of first relaxation sample
-    window_s        : relaxation window length [s] (default 30 s)
+    window_s        : relaxation window length [s] (default 40 s, per
+                      Białoń et al. 2023)
 
     Returns
     -------

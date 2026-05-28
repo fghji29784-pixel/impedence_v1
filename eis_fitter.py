@@ -26,7 +26,8 @@ Changes from DCIM_claude:
 
 References
 ----------
-  Boukamp 1995 — Solid State Ionics 18-19, CNLS method
+  Boukamp 1986 — Solid State Ionics 18–19, pp. 136–140, CNLS fit method
+  Boukamp 1995 — J. Electrochem. Soc. 142(6):1885–1894, Kronig-Kramers validation
   Orazem & Tribollet 2008 — Electrochemical Impedance Spectroscopy, Wiley
 """
 

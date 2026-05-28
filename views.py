@@ -526,6 +526,83 @@ EIS Rs는 4-wire 고주파 측정으로 순수 전해질 저항.
                         "아크 모양 비교에 사용할 수 있습니다."
                     )
 
+                # ── Rs 보정 추정 expander ─────────────────────────────────
+                with st.expander("🔬 Rs 보정 추정 (Barai 2018 · Kasper 2023 기반)"):
+                    st.markdown("""
+**원리 (Kasper et al. 2023, doi:10.1002/batt.202200415)**
+
+p1 샘플링 시점(t_p1)에서 R₁‖C₁ 회로가 이미 일부 충전되어 있어
+DCIM의 ΔV/ΔI가 R₁ 기여분을 포함하게 됩니다:
+
+> Rs_DCIM ≈ Rs_EIS + R₁·(1 − exp(−t_p1 / τ₁))
+
+EIS에서 추출한 R₁, C₁로 이 기여분을 역보정합니다.
+""")
+                    # t_p1 elapsed time
+                    df_charge = st.session_state.get("df_charge")
+                    idx_p0    = st.session_state.get("idx_p0")
+                    idx_p1    = st.session_state.get("idx_p1")
+
+                    t_p1_s = None
+                    if df_charge is not None and idx_p0 is not None and idx_p1 is not None:
+                        try:
+                            t_p1_s = float(
+                                df_charge.loc[idx_p1, "time_s"]
+                                - df_charge.loc[idx_p0, "time_s"]
+                            )
+                        except Exception:
+                            t_p1_s = None
+
+                    # EIS R1, C1 from best converged model
+                    R1_e = None
+                    C1_e = None
+                    if eis_fit_res:
+                        best_conv = next((r for r in eis_fit_res if r.converged), None)
+                        if best_conv is not None:
+                            pd_b = best_conv.params_dict
+                            # Randles_W uses "Rct"/"Cdl"; 2RC / 3RC use "R1"/"C1"
+                            R1_e = pd_b.get("R1") or pd_b.get("Rct")
+                            C1_e = pd_b.get("C1") or pd_b.get("Cdl")
+
+                    if t_p1_s is not None and R1_e and C1_e:
+                        tau1_e      = R1_e * C1_e
+                        correction  = R1_e * (1.0 - math.exp(-t_p1_s / tau1_e))
+                        Rs_corr_moh = (result.Rs - correction) * 1000
+
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            st.metric("t_p1 (샘플링 지연)", f"{t_p1_s * 1e3:.2f} ms")
+                            st.metric("τ₁_EIS (R₁·C₁)", f"{tau1_e * 1e3:.2f} ms")
+                            st.metric("R₁_EIS 기여분 (보정량)",
+                                      f"{correction * 1000:+.3f} mΩ")
+                        with col_b:
+                            st.metric("DCIM Rs (원본)",   f"{rs_dcim:.3f} mΩ")
+                            st.metric("Rs 보정값 (추정)", f"{Rs_corr_moh:.3f} mΩ")
+                            delta_pct = (Rs_corr_moh - rs_eis) / rs_eis * 100 if rs_eis else 0.0
+                            st.metric("보정 후 vs EIS Rs",
+                                      f"{rs_eis:.3f} mΩ",
+                                      delta=f"{delta_pct:+.1f}%",
+                                      delta_color="inverse")
+
+                        st.caption(
+                            f"EIS 최적 모델: {best_conv.model_name}  |  "
+                            f"R₁={R1_e*1000:.3f} mΩ  C₁={C1_e*1000:.3f} mF"
+                        )
+                        st.info(
+                            "⚠️ 이 보정은 **추정값**입니다. "
+                            "2-wire 케이블 저항은 별도로 차감해야 합니다."
+                        )
+                    else:
+                        missing = []
+                        if t_p1_s is None:
+                            missing.append("DCIM p0/p1 인덱스(분석 실행 필요)")
+                        if not (R1_e and C1_e):
+                            missing.append("EIS R₁/C₁(EIS 탭에서 피팅 필요)")
+                        st.info(
+                            "보정 계산에 필요한 정보가 없습니다: "
+                            + ", ".join(missing)
+                        )
+
         with st.expander("📋 나이퀴스트 데이터 테이블"):
             nyq_df = pd.DataFrame({
                 "Re(Z) [mΩ]":  st.session_state.re_z * 1000,
